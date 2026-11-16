@@ -14,7 +14,6 @@ let sessionInfo = {
 };
 let cachedGames = [];
 
-// Pre-fetch all 21,000+ official Discord desktop games on server startup
 async function loadGamesCache() {
   try {
     const response = await fetch('https://discord.com/api/v9/games/detectable');
@@ -37,26 +36,36 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Paginated & searchable games feed for smooth scrolling
 app.get('/games', async (req, res) => {
   if (cachedGames.length === 0) await loadGamesCache();
   const q = (req.query.q || '').toLowerCase().trim();
-  if (!q) {
-    const popular = ['Minecraft', 'Roblox', 'Grand Theft Auto V', 'VALORANT', 'Fortnite', 'Counter-Strike 2', 'League of Legends', 'Genshin Impact', 'Apex Legends', 'Rocket League'];
-    return res.json(cachedGames.filter(g => popular.includes(g.name)).slice(0, 20));
+  const page = parseInt(req.query.page) || 1;
+  const limit = 30;
+
+  let filtered = cachedGames;
+  if (q) {
+    filtered = cachedGames.filter(g => g.name.toLowerCase().includes(q));
   }
-  const results = cachedGames.filter(g => g.name.toLowerCase().includes(q)).slice(0, 40);
-  res.json(results);
+
+  const start = (page - 1) * limit;
+  const paginated = filtered.slice(start, start + limit);
+
+  res.json({
+    games: paginated,
+    hasMore: start + limit < filtered.length
+  });
 });
 
 app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// 1. Connect Discord account ONCE
+// Secure connection endpoint handling token injection
 app.post('/connect', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
-    return res.status(400).json({ error: 'Please paste your Discord token first.' });
+    return res.status(400).json({ error: 'Authentication token missing.' });
   }
 
   try {
@@ -81,11 +90,10 @@ app.post('/connect', async (req, res) => {
     await client.login(token.trim());
   } catch (err) {
     sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
-    res.status(401).json({ error: 'Invalid token or connection failed.' });
+    res.status(401).json({ error: 'Invalid token or authentication failed.' });
   }
 });
 
-// 2. Disconnect Discord account
 app.post('/disconnect', (req, res) => {
   if (activeClient) {
     activeClient.destroy();
@@ -95,15 +103,14 @@ app.post('/disconnect', (req, res) => {
   res.json({ success: true });
 });
 
-// 3. Switch games INSTANTLY without reconnecting
 app.post('/set-game', (req, res) => {
   if (!activeClient || !sessionInfo.connected) {
-    return res.status(400).json({ error: 'Connect your Discord account first!' });
+    return res.status(400).json({ error: 'Please connect your Discord account first.' });
   }
 
   const { appId, gameName, details, state, statusType, largeImage, buttonLabel, buttonUrl } = req.body;
   if (!appId || !gameName) {
-    return res.status(400).json({ error: 'Select a game first.' });
+    return res.status(400).json({ error: 'Select a valid game.' });
   }
 
   try {
@@ -128,11 +135,10 @@ app.post('/set-game', (req, res) => {
     sessionInfo.activeGame = gameName.trim();
     res.json({ success: true, session: sessionInfo });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update game activity.' });
+    res.status(500).json({ error: 'Failed to broadcast game status.' });
   }
 });
 
-// 4. Clear game activity while staying connected
 app.post('/clear-game', (req, res) => {
   if (activeClient && sessionInfo.connected) {
     activeClient.user.setActivity(null);
@@ -142,4 +148,4 @@ app.post('/clear-game', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`RPC Panel running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Nexus Black/Red RPC running on port ${PORT}`));
