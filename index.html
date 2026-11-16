@@ -3,396 +3,210 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Nexus RPC — Professional Gaming Presence</title>
+  <title>Nexus RPC Suite</title>
   <style>
     :root {
-      --bg: #09090b;
-      --card: #121216;
-      --input: #18181f;
-      --border: #272730;
-      --red: #dc2626;
-      --red-hover: #b91c1c;
-      --green: #22c55e;
-      --text: #f4f4f5;
-      --muted: #a1a1aa;
+      --bg: #050507;
+      --card: #0d0d11;
+      --input: #121218;
+      --border: #1f1f2a;
+      --red: #ef4444;
+      --red-glow: rgba(239, 68, 68, 0.35);
+      --text: #f3f4f6;
+      --muted: #9ca3af;
     }
-    * { box-sizing: border-box; font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body {
-      background: radial-gradient(circle at top, #1a0505 0%, var(--bg) 70%);
-      color: var(--text);
-      margin: 0;
-      padding: 16px;
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: flex-start;
-    }
-    .container {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 22px;
-      width: 100%;
-      max-width: 480px;
-      box-shadow: 0 25px 50px -12px rgba(220, 38, 38, 0.15);
-    }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
-    .title h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: -0.5px; color: #fff; text-transform: uppercase; }
-    .title h1 span { color: var(--red); }
-    .title span.sub { font-size: 11px; color: var(--muted); display: block; font-weight: 400; text-transform: none; }
-    
-    .pill {
-      padding: 6px 12px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 700;
-      background: #1f1f28;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      text-transform: uppercase;
-    }
-    .pill.online { background: rgba(34, 197, 94, 0.1); color: #4ade80; border-color: rgba(34, 197, 94, 0.3); }
-
-    .section {
-      background: rgba(0,0,0,0.3);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 16px;
-      margin-bottom: 16px;
-    }
-
-    /* Discord OAuth Button Styling */
-    .discord-btn {
-      width: 100%;
-      background: #5865f2;
-      color: white;
-      border: none;
-      padding: 13px;
-      border-radius: 12px;
-      font-weight: 700;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      cursor: pointer;
-      transition: background 0.2s, transform 0.1s;
-    }
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg); color: var(--text); margin: 0; padding: 16px; min-height: 100vh; display: flex; justify-content: center; align-items: flex-start; }
+    .container { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; width: 100%; max-width: 460px; box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 15px var(--red-glow); }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+    .title h1 { margin: 0; font-size: 20px; font-weight: 900; text-transform: uppercase; color: #fff; }
+    .title h1 span { color: var(--red); text-shadow: 0 0 10px var(--red); }
+    .status-badge { padding: 5px 10px; border-radius: 6px; font-size: 10px; font-weight: 800; background: #181822; color: var(--muted); border: 1px solid var(--border); text-transform: uppercase; }
+    .status-badge.online { background: rgba(34, 197, 94, 0.1); color: #4ade80; border-color: rgba(34, 197, 94, 0.3); box-shadow: 0 0 8px rgba(34, 197, 94, 0.2); }
+    .section { background: #09090d; border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+    .discord-btn { width: 100%; background: #5865f2; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer; text-decoration: none; box-shadow: 0 0 15px rgba(88, 101, 242, 0.3); }
     .discord-btn:hover { background: #4752c4; }
-
-    .token-collapse { margin-top: 10px; font-size: 12px; text-align: center; color: var(--muted); cursor: pointer; text-decoration: underline; }
-
-    .user-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .user-info { display: flex; align-items: center; gap: 12px; }
-    .avatar { width: 42px; height: 42px; border-radius: 50%; border: 2px solid var(--red); object-fit: cover; }
-    .username { font-weight: 700; font-size: 14px; color: #fff; }
-    .subtext { font-size: 12px; color: var(--muted); }
-
-    label { display: block; font-size: 11px; font-weight: 700; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-    label:first-child { margin-top: 0; }
-    input, select {
-      width: 100%;
-      padding: 12px 14px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--input);
-      color: #fff;
-      font-size: 14px;
-      outline: none;
-      transition: border 0.2s;
-    }
-    input:focus, select:focus { border-color: var(--red); }
-
-    /* Infinite Scroll Game Catalog */
-    .game-search-box { position: relative; margin-bottom: 8px; }
-    .game-list {
-      max-height: 240px;
-      overflow-y: auto;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: var(--input);
-    }
-    .game-item {
-      padding: 10px 14px;
-      border-bottom: 1px solid #22222d;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      transition: background 0.15s;
-    }
-    .game-item:last-child { border-bottom: none; }
-    .game-item:hover { background: rgba(220, 38, 38, 0.2); }
-    .game-icon { width: 32px; height: 32px; border-radius: 8px; background: #22222d; object-fit: cover; flex-shrink: 0; }
+    .user-card { display: flex; align-items: center; justify-content: space-between; }
+    .user-info { display: flex; align-items: center; gap: 10px; }
+    .avatar { width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--red); object-fit: cover; }
+    .username { font-weight: 700; font-size: 13px; color: #fff; }
+    .subtext { font-size: 11px; color: var(--muted); }
+    label { display: block; font-size: 10px; font-weight: 800; color: var(--muted); margin: 10px 0 5px; text-transform: uppercase; }
+    input, select { width: 100%; padding: 11px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--input); color: #fff; font-size: 13px; outline: none; }
+    input:focus, select:focus { border-color: var(--red); box-shadow: 0 0 8px var(--red-glow); }
+    .game-list { max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--input); }
+    .game-item { padding: 9px 12px; border-bottom: 1px solid #1a1a24; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+    .game-item:hover { background: rgba(239, 68, 68, 0.15); }
+    .game-icon { width: 28px; height: 28px; border-radius: 6px; background: #1a1a24; object-fit: cover; }
     .game-meta { display: flex; flex-direction: column; overflow: hidden; }
-    .game-title { font-size: 14px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .game-id { font-size: 11px; color: var(--muted); }
-
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .btn-row { display: flex; gap: 10px; margin-top: 16px; }
-    button {
-      width: 100%;
-      padding: 13px;
-      border: none;
-      border-radius: 12px;
-      font-size: 14px;
-      font-weight: 800;
-      cursor: pointer;
-      transition: transform 0.1s, background 0.2s;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    button:active { transform: scale(0.98); }
-    .btn-red { background: var(--red); color: #fff; }
-    .btn-red:hover { background: var(--red-hover); }
-    .btn-clear { background: #272730; color: #a1a1aa; border: 1px solid #3f3f46; }
-    .btn-clear:hover { background: #3f3f46; color: #fff; }
-    .btn-sm { width: auto; padding: 8px 12px; font-size: 11px; }
-
-    .toast { margin-top: 14px; font-size: 13px; text-align: center; color: var(--muted); min-height: 18px; font-weight: 500; }
+    .game-title { font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .game-id { font-size: 10px; color: var(--muted); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-row { display: flex; gap: 8px; margin-top: 14px; }
+    button { width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 13px; font-weight: 800; cursor: pointer; text-transform: uppercase; }
+    .btn-red { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
+    .btn-dark { background: #181822; color: var(--muted); border: 1px solid var(--border); }
+    .toast { margin-top: 12px; font-size: 12px; text-align: center; color: var(--muted); font-weight: 600; }
     .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <div class="title">
-        <h1>Nexus <span>RPC</span></h1>
-        <span class="sub">Professional Gaming Presence Suite</span>
-      </div>
-      <div id="connPill" class="pill">Offline</div>
+      <div class="title"><h1>Nexus <span>RPC</span></h1></div>
+      <div id="connPill" class="status-badge">Offline</div>
     </div>
 
-    <!-- Discord OAuth Mock / Token Gateway Box -->
+    <!-- Login with Discord Button -->
     <div id="loginBox" class="section">
-      <button class="discord-btn" onclick="triggerDiscordOAuth()">
-        <svg width="20" height="20" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.68,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1,105.25,105.25,0,0,0,32.19-16.15c2.65-27.28-4.51-51.19-18.9-72.15ZM42.45,65.69C36.18,65.69,31,60,31,53s5.18-12.72,11.45-12.72S53.9,46,53.88,53,48.72,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.2,60,73.2,53s5.18-12.72,11.45-12.72S96.14,46,96.12,53,91,65.69,84.69,65.69Z"/></svg>
-        Authorize with Discord
-      </button>
-      <div class="token-collapse" onclick="toggleManualToken()">Or paste token manually</div>
-      <div id="manualTokenBox" class="hidden" style="margin-top: 10px;">
-        <input type="password" id="tokenInput" placeholder="Paste Discord Token..." />
-        <button class="btn-red" style="margin-top: 8px;" onclick="connectWithToken()">Connect Manually</button>
+      <a href="/auth/discord" class="discord-btn">
+        <svg width="18" height="18" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.68,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1,105.25,105.25,0,0,0,32.19-16.15c2.65-27.28-4.51-51.19-18.9-72.15ZM42.45,65.69C36.18,65.69,31,60,31,53s5.18-12.72,11.45-12.72S53.9,46,53.88,53,48.72,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.2,60,73.2,53s5.18-12.72,11.45-12.72S96.14,46,96.12,53,91,65.69,84.69,65.69Z"/></svg>
+        Login with Discord
+      </a>
+      
+      <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px;">
+        <label>Account Token (Required for Gateway Proxy)</label>
+        <input type="password" id="tokenInput" placeholder="Paste token here..." />
+        <button class="btn-red" style="margin-top: 6px;" onclick="connectToken()">Connect Session</button>
       </div>
     </div>
 
-    <!-- Connected User Header -->
+    <!-- Connected User Bar -->
     <div id="connectedBox" class="section hidden">
-      <div class="user-bar">
+      <div class="user-card">
         <div class="user-info">
           <img id="userAvatar" class="avatar" src="" alt="" />
           <div>
             <div id="userName" class="username">User</div>
-            <div id="activeGameText" class="subtext">Ready to broadcast</div>
+            <div id="activeGameText" class="subtext">Ready</div>
           </div>
         </div>
-        <button class="btn-clear btn-sm" onclick="disconnectAccount()">Disconnect</button>
+        <button class="btn-dark" style="width:auto;padding:6px 10px;font-size:10px;" onclick="disconnectAccount()">Logout</button>
       </div>
     </div>
 
-    <!-- Game Catalog & Rich Presence Controls -->
+    <!-- Game Catalog -->
     <div class="section">
-      <label>Select Game (Scroll for more)</label>
-      <div class="game-search-box">
-        <input type="text" id="searchInput" placeholder="Search 21,000+ games..." oninput="resetAndSearch()" />
-      </div>
-      <div id="gameList" class="game-list" onscroll="handleScroll(event)"></div>
+      <label>Search Games</label>
+      <input type="text" id="searchInput" placeholder="Search..." oninput="resetAndSearch()" />
+      <div id="gameList" class="game-list" onscroll="handleScroll(event)" style="margin-top: 6px;"></div>
 
       <div class="grid-2">
-        <div>
-          <label>Game Name</label>
-          <input type="text" id="gameName" placeholder="Minecraft" />
-        </div>
-        <div>
-          <label>Application ID</label>
-          <input type="text" id="appId" placeholder="App ID" />
-        </div>
+        <div><label>Game Name</label><input type="text" id="gameName" /></div>
+        <div><label>App ID</label><input type="text" id="appId" /></div>
       </div>
-
-      <label>Game Icon Asset URL</label>
-      <input type="text" id="largeImage" placeholder="Auto-filled on selection" />
-
+      <label>Icon URL</label><input type="text" id="largeImage" />
       <div class="grid-2">
-        <div>
-          <label>Details (Line 1)</label>
-          <input type="text" id="details" placeholder="In a match" />
-        </div>
-        <div>
-          <label>State (Line 2)</label>
-          <input type="text" id="state" placeholder="Competitive" />
-        </div>
+        <div><label>Details</label><input type="text" id="details" /></div>
+        <div><label>State</label><input type="text" id="state" /></div>
       </div>
-
       <div class="grid-2">
-        <div>
-          <label>Button Label</label>
-          <input type="text" id="buttonLabel" placeholder="View Game" />
-        </div>
-        <div>
-          <label>Button URL</label>
-          <input type="text" id="buttonUrl" placeholder="https://..." />
-        </div>
+        <div><label>Button Label</label><input type="text" id="buttonLabel" /></div>
+        <div><label>Button URL</label><input type="text" id="buttonUrl" /></div>
       </div>
-
-      <label>User Status</label>
-      <select id="statusType">
-        <option value="online">Online</option>
-        <option value="dnd">Do Not Disturb</option>
-        <option value="idle">Idle</option>
-      </select>
-
+      <label>Status</label>
+      <select id="statusType"><option value="online">Online</option><option value="dnd">DND</option><option value="idle">Idle</option></select>
       <div class="btn-row">
         <button class="btn-red" onclick="activateGame()">Set Status</button>
-        <button class="btn-clear" onclick="clearGame()">Clear</button>
+        <button class="btn-dark" onclick="clearGame()">Clear</button>
       </div>
     </div>
-
     <div id="toast" class="toast"></div>
   </div>
 
   <script>
-    let currentPage = 1;
-    let isLoading = false;
-    let hasMoreGames = true;
-    let currentQuery = '';
+    let currentPage = 1, isLoading = false, hasMoreGames = true;
 
     window.onload = () => {
-      const savedToken = localStorage.getItem('nexus_token');
-      if (savedToken) {
-        document.getElementById('tokenInput').value = savedToken;
-        connectWithToken(false);
-      }
+      checkStatus();
       loadMoreGames(true);
+      const saved = localStorage.getItem('nexus_token');
+      if (saved) document.getElementById('tokenInput').value = saved;
     };
 
-    function showToast(text, isError = false) {
+    function showToast(msg, err=false) {
       const t = document.getElementById('toast');
-      t.style.color = isError ? '#f87171' : '#4ade80';
-      t.innerText = text;
+      t.style.color = err ? '#f87171' : '#4ade80';
+      t.innerText = msg;
     }
 
-    function toggleManualToken() {
-      const box = document.getElementById('manualTokenBox');
-      box.classList.toggle('hidden');
-    }
-
-    function triggerDiscordOAuth() {
-      // Mimics Roxydev authorization flow redirect prompt
-      const confirmed = confirm("To secure your account without exposing credentials directly, connect your token or authorization session. Would you like to enter your token manually?");
-      if (confirmed) {
-        toggleManualToken();
-      }
+    async function checkStatus() {
+      const res = await fetch('/status');
+      const session = await res.json();
+      updateUI(session);
     }
 
     function updateUI(session) {
-      const pill = document.getElementById('connPill');
-      const loginBox = document.getElementById('loginBox');
-      const connectedBox = document.getElementById('connectedBox');
-
       if (session && session.connected) {
-        pill.className = 'pill online';
-        pill.innerText = 'Connected';
-        loginBox.classList.add('hidden');
-        connectedBox.classList.remove('hidden');
+        document.getElementById('connPill').className = 'status-badge online';
+        document.getElementById('connPill').innerText = 'Connected';
+        document.getElementById('loginBox').classList.add('hidden');
+        document.getElementById('connectedBox').classList.remove('hidden');
         document.getElementById('userName').innerText = session.user;
-        document.getElementById('userAvatar').src = session.avatar || '';
-        document.getElementById('activeGameText').innerText = session.activeGame
-          ? `Playing ${session.activeGame}`
-          : 'Ready for activation';
+        document.getElementById('userAvatar').src = session.avatar;
+        document.getElementById('activeGameText').innerText = session.activeGame ? `Playing ${session.activeGame}` : 'Ready';
       } else {
-        pill.className = 'pill';
-        pill.innerText = 'Offline';
-        loginBox.classList.remove('hidden');
-        connectedBox.classList.add('hidden');
+        document.getElementById('connPill').className = 'status-badge';
+        document.getElementById('connPill').innerText = 'Offline';
+        document.getElementById('loginBox').classList.remove('hidden');
+        document.getElementById('connectedBox').classList.add('hidden');
       }
     }
 
-    async function connectWithToken(save = true) {
+    async function connectToken() {
       const token = document.getElementById('tokenInput').value.trim();
-      if (!token) return showToast('Please enter your token.', true);
-
-      if (save) localStorage.setItem('nexus_token', token);
-
-      try {
-        const res = await fetch('/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token })
-        });
-        const data = await res.json();
-        if (data.success) {
-          showToast('Successfully connected to Discord!');
-          updateUI(data.session);
-        } else {
-          showToast(data.error || 'Connection failed.', true);
-          localStorage.removeItem('nexus_token');
-        }
-      } catch (e) {
-        showToast('Network error.', true);
+      if (!token) return showToast('Token required', true);
+      localStorage.setItem('nexus_token', token);
+      const res = await fetch('/connect-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Connected!');
+        updateUI(data.session);
+      } else {
+        showToast(data.error, true);
       }
     }
 
     async function disconnectAccount() {
       localStorage.removeItem('nexus_token');
       await fetch('/disconnect', { method: 'POST' });
-      showToast('Disconnected session.');
-      updateUI({ connected: false });
+      showToast('Logged out');
+      checkStatus();
     }
 
-    // Infinite Scrolling Game Catalog Loader
-    async function loadMoreGames(reset = false) {
+    async function loadMoreGames(reset=false) {
       if (isLoading || (!hasMoreGames && !reset)) return;
       isLoading = true;
-
-      if (reset) {
-        currentPage = 1;
-        hasMoreGames = true;
-        document.getElementById('gameList').innerHTML = '<div style="padding:12px;font-size:13px;color:#a1a1aa;text-align:center;">Loading games...</div>';
-      }
-
+      if (reset) { currentPage = 1; hasMoreGames = true; }
       const q = document.getElementById('searchInput').value;
       const res = await fetch(`/games?q=${encodeURIComponent(q)}&page=${currentPage}`);
       const data = await res.json();
-
       const list = document.getElementById('gameList');
       if (reset) list.innerHTML = '';
-
-      if (data.games.length === 0 && reset) {
-        list.innerHTML = '<div style="padding:12px;font-size:13px;color:#a1a1aa;text-align:center;">No games found.</div>';
-        isLoading = false;
-        return;
-      }
-
       data.games.forEach(g => {
         const div = document.createElement('div');
         div.className = 'game-item';
-        const icon = g.icon
-          ? `<img class="game-icon" src="${g.icon}" loading="lazy" />`
-          : `<div class="game-icon"></div>`;
-        div.innerHTML = `${icon}<div class="game-meta"><span class="game-title">${g.name}</span><span class="game-id">ID: ${g.id}</span></div>`;
+        div.innerHTML = `<img class="game-icon" src="${g.icon||''}" /><div class="game-meta"><span class="game-title">${g.name}</span><span class="game-id">${g.id}</span></div>`;
         div.onclick = () => {
           document.getElementById('gameName').value = g.name;
           document.getElementById('appId').value = g.id;
           document.getElementById('largeImage').value = g.icon || '';
-          showToast(`Selected: ${g.name}`);
+          showToast(`Selected ${g.name}`);
         };
         list.appendChild(div);
       });
-
       hasMoreGames = data.hasMore;
       currentPage++;
       isLoading = false;
     }
 
-    function resetAndSearch() {
-      loadMoreGames(true);
-    }
-
+    function resetAndSearch() { loadMoreGames(true); }
     function handleScroll(e) {
-      const el = e.target;
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 30) {
-        loadMoreGames(false);
-      }
+      if (e.target.scrollTop + e.target.clientHeight >= e.target.scrollHeight - 20) loadMoreGames();
     }
 
     async function activateGame() {
@@ -406,25 +220,16 @@
         buttonUrl: document.getElementById('buttonUrl').value,
         statusType: document.getElementById('statusType').value
       };
-
-      const res = await fetch('/set-game', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      const res = await fetch('/set-game', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const data = await res.json();
-      if (data.success) {
-        showToast(`Status active: Playing ${body.gameName}`);
-        updateUI(data.session);
-      } else {
-        showToast(data.error || 'Failed to set status.', true);
-      }
+      if (data.success) { showToast(`Live: ${body.gameName}`); updateUI(data.session); }
+      else { showToast(data.error, true); }
     }
 
     async function clearGame() {
       const res = await fetch('/clear-game', { method: 'POST' });
       const data = await res.json();
-      showToast('Activity cleared.');
+      showToast('Cleared');
       updateUI(data.session);
     }
   </script>
