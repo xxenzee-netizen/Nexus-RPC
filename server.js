@@ -7,9 +7,33 @@ app.use(express.json());
 
 let activeClient = null;
 let currentStatus = { active: false, game: '', user: '' };
+let cachedGames = [];
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/games', async (req, res) => {
+  try {
+    if (cachedGames.length === 0) {
+      const response = await fetch('https://discord.com/api/v9/games/detectable');
+      const data = await response.json();
+      cachedGames = data
+        .filter(g => g.id && g.name)
+        .map(g => ({
+          id: g.id,
+          name: g.name,
+          icon: g.icon_hash ? `https://cdn.discordapp.com/app-icons/${g.id}/${g.icon_hash}.png?size=64` : ''
+        }));
+    }
+    const q = (req.query.q || '').toLowerCase().trim();
+    const results = q
+      ? cachedGames.filter(g => g.name.toLowerCase().includes(q)).slice(0, 30)
+      : cachedGames.filter(g => ['Minecraft', 'Roblox', 'Grand Theft Auto V', 'VALORANT', 'Fortnite', 'Counter-Strike 2'].includes(g.name)).slice(0, 20);
+    res.json(results);
+  } catch (e) {
+    res.status(500).json([]);
+  }
 });
 
 app.get('/status', (req, res) => {
