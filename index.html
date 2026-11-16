@@ -15,7 +15,7 @@
     label { display: block; font-size: 12px; font-weight: 600; color: #cbd5e1; margin: 12px 0 6px; }
     input, select { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid #2e3444; background: #10131a; color: #fff; font-size: 14px; outline: none; }
     input:focus, select:focus { border-color: #5865f2; }
-    .game-list { max-height: 190px; overflow-y: auto; border: 1px solid #2e3444; border-radius: 10px; margin-top: 6px; background: #10131a; }
+    .game-list { max-height: 160px; overflow-y: auto; border: 1px solid #2e3444; border-radius: 10px; margin-top: 6px; background: #10131a; }
     .game-item { padding: 9px 12px; font-size: 14px; border-bottom: 1px solid #1e222d; cursor: pointer; display: flex; align-items: center; gap: 10px; }
     .game-item:last-child { border-bottom: none; }
     .game-item:hover { background: #5865f2; color: #fff; }
@@ -32,27 +32,36 @@
 <body>
   <div class="card">
     <h2>Real Game RPC Panel</h2>
-    <p class="sub">21,000+ Official Discord Games</p>
+    <p class="sub">Official Roxydev-style Panel</p>
     <div id="statusBadge" class="badge">Status: Offline</div>
 
     <label>Discord Token</label>
     <input type="password" id="token" placeholder="Paste your Discord token here" />
 
     <label>Search Any Real Game</label>
-    <input type="text" id="search" placeholder="Search Minecraft, Roblox, GTA, Valorant..." oninput="searchGames()" />
+    <input type="text" id="search" placeholder="Search Minecraft, GTA V, Roblox..." oninput="searchGames()" />
     <div id="gameList" class="game-list"></div>
 
     <label>Selected Game Name</label>
-    <input type="text" id="gameName" placeholder="Select a game above" />
+    <input type="text" id="gameName" placeholder="Game Name" />
 
     <label>Official Application ID</label>
-    <input type="text" id="appId" placeholder="Auto-filled when you tap a game" />
+    <input type="text" id="appId" placeholder="App ID" />
 
-    <label>Details (Optional)</label>
-    <input type="text" id="details" placeholder="Playing Survival" />
+    <label>Large Image URL / Asset Key (Optional)</label>
+    <input type="text" id="largeImage" placeholder="Paste image URL or asset key" />
 
-    <label>State (Optional)</label>
+    <label>Details (e.g. In a Match / Online)</label>
+    <input type="text" id="details" placeholder="Playing Online" />
+
+    <label>State (e.g. Level 50)</label>
     <input type="text" id="state" placeholder="Solo" />
+
+    <label>Button 1 Label (e.g. View Website)</label>
+    <input type="text" id="buttonLabel" placeholder="View Game" />
+
+    <label>Button 1 Link (e.g. https://...)</label>
+    <input type="text" id="buttonUrl" placeholder="https://google.com" />
 
     <label>Online Status</label>
     <select id="statusType">
@@ -88,6 +97,7 @@
           div.onclick = () => {
             document.getElementById('gameName').value = g.name;
             document.getElementById('appId').value = g.id;
+            if (g.icon) document.getElementById('largeImage').value = g.icon;
           };
           list.appendChild(div);
         });
@@ -116,7 +126,10 @@
         gameName: document.getElementById('gameName').value,
         details: document.getElementById('details').value,
         state: document.getElementById('state').value,
-        statusType: document.getElementById('statusType').value
+        statusType: document.getElementById('statusType').value,
+        largeImage: document.getElementById('largeImage').value,
+        buttonLabel: document.getElementById('buttonLabel').value,
+        buttonUrl: document.getElementById('buttonUrl').value
       };
       const res = await fetch('/start', {
         method: 'POST',
