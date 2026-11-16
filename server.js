@@ -1,3 +1,45 @@
+const express = require('express');
+const path = require('path');
+const { Client, RichPresence } = require('discord.js-selfbot-v13');
+
+const app = express();
+app.use(express.json());
+
+let activeClient = null;
+let currentStatus = { active: false, game: '', user: '' };
+let cachedGames = [];
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/games', async (req, res) => {
+  try {
+    if (cachedGames.length === 0) {
+      const response = await fetch('https://discord.com/api/v9/games/detectable');
+      const data = await response.json();
+      cachedGames = data
+        .filter(g => g.id && g.name)
+        .map(g => ({
+          id: g.id,
+          name: g.name,
+          icon: g.icon_hash ? `https://cdn.discordapp.com/app-icons/${g.id}/${g.icon_hash}.png?size=64` : ''
+        }));
+    }
+    const q = (req.query.q || '').toLowerCase().trim();
+    const results = q
+      ? cachedGames.filter(g => g.name.toLowerCase().includes(q)).slice(0, 30)
+      : cachedGames.filter(g => ['Minecraft', 'Roblox', 'Grand Theft Auto V', 'VALORANT', 'Fortnite', 'Counter-Strike 2'].includes(g.name)).slice(0, 20);
+    res.json(results);
+  } catch (e) {
+    res.status(500).json([]);
+  }
+});
+
+app.get('/status', (req, res) => {
+  res.json(currentStatus);
+});
+
 app.post('/start', async (req, res) => {
   const { token, appId, gameName, details, state, statusType, largeImage, buttonLabel, buttonUrl } = req.body;
 
@@ -27,7 +69,6 @@ app.post('/start', async (req, res) => {
       if (largeImage && largeImage.trim()) rpc.setAssetsLargeImage(largeImage.trim());
       if (gameName) rpc.setAssetsLargeText(gameName.trim());
 
-      // Add custom buttons if provided
       if (buttonLabel && buttonLabel.trim() && buttonUrl && buttonUrl.trim()) {
         rpc.addButton(buttonLabel.trim(), buttonUrl.trim());
       }
@@ -50,3 +91,15 @@ app.post('/start', async (req, res) => {
     res.status(500).json({ error: 'Failed to connect. Check if your token is valid.' });
   }
 });
+
+app.post('/stop', (req, res) => {
+  if (activeClient) {
+    activeClient.destroy();
+    activeClient = null;
+  }
+  currentStatus = { active: false, game: '', user: '' };
+  res.json({ success: true });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`RPC Panel running on port ${PORT}`));
