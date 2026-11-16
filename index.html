@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Real Game RPC Panel</title>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0f1117; color: #f1f5f9; margin: 0; padding: 16px; display: flex; justify-content: center; }
+    .card { background: #181b24; border: 1px solid #2a2f3d; border-radius: 16px; padding: 20px; width: 100%; max-width: 440px; }
+    h2 { margin: 0 0 6px; font-size: 20px; color: #fff; }
+    p.sub { margin: 0 0 18px; font-size: 13px; color: #94a3b8; }
+    .badge { display: inline-block; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-bottom: 16px; background: #262b38; color: #94a3b8; }
+    .badge.live { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+    label { display: block; font-size: 12px; font-weight: 600; color: #cbd5e1; margin: 12px 0 6px; }
+    input, select { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid #2e3444; background: #10131a; color: #fff; font-size: 14px; outline: none; }
+    input:focus, select:focus { border-color: #5865f2; }
+    .game-list { max-height: 160px; overflow-y: auto; border: 1px solid #2e3444; border-radius: 10px; margin-top: 6px; background: #10131a; }
+    .game-item { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid #1e222d; cursor: pointer; display: flex; justify-content: space-between; }
+    .game-item:last-child { border-bottom: none; }
+    .game-item:hover, .game-item.selected { background: #5865f2; color: #fff; }
+    .game-id { font-size: 11px; opacity: 0.7; }
+    .row { display: flex; gap: 10px; margin-top: 18px; }
+    button { flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .btn-start { background: #5865f2; color: #fff; }
+    .btn-stop { background: #ef4444; color: #fff; }
+    .msg { margin-top: 12px; font-size: 13px; text-align: center; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Real Game RPC Panel</h2>
+    <p class="sub">Official Discord Game Profiles on Mobile</p>
+    <div id="statusBadge" class="badge">Status: Offline</div>
+
+    <label>Discord Token</label>
+    <input type="password" id="token" placeholder="Paste your Discord token here" />
+
+    <label>Search Real Desktop Game</label>
+    <input type="text" id="search" placeholder="Type Minecraft, Roblox, GTA V, Valorant..." oninput="renderGames()" />
+    <div id="gameList" class="game-list"></div>
+
+    <label>Selected Game Name</label>
+    <input type="text" id="gameName" value="Minecraft" />
+
+    <label>Official Application ID</label>
+    <input type="text" id="appId" value="380220150753722368" />
+
+    <label>Details (Optional - e.g. Playing Survival)</label>
+    <input type="text" id="details" placeholder="Playing Survival" />
+
+    <label>State (Optional - e.g. In a Match)</label>
+    <input type="text" id="state" placeholder="Solo" />
+
+    <label>Online Status</label>
+    <select id="statusType">
+      <option value="online">Online (Green)</option>
+      <option value="dnd">Do Not Disturb (Red)</option>
+      <option value="idle">Idle (Yellow)</option>
+    </select>
+
+    <div class="row">
+      <button class="btn-start" onclick="startRPC()">Activate Game</button>
+      <button class="btn-stop" onclick="stopRPC()">Stop</button>
+    </div>
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <script>
+    const GAMES = [
+      { name: "Minecraft", id: "380220150753722368" },
+      { name: "Roblox", id: "363445589247131668" },
+      { name: "Grand Theft Auto V", id: "382624125287399424" },
+      { name: "VALORANT", id: "700136079562375258" },
+      { name: "Fortnite", id: "432980957394370572" },
+      { name: "Counter-Strike 2", id: "1211781489931452447" },
+      { name: "League of Legends", id: "401518684763586560" },
+      { name: "Genshin Impact", id: "762434991303950386" },
+      { name: "Apex Legends", id: "541162286617198592" },
+      { name: "Call of Duty", id: "463151177836658699" },
+      { name: "Rocket League", id: "379286085710381999" },
+      { name: "Cyberpunk 2077", id: "776531591109246986" },
+      { name: "Red Dead Redemption 2", id: "640687559922810920" },
+      { name: "Overwatch 2", id: "356875221078245376" },
+      { name: "EA SPORTS FC 24", id: "1156674615871586375" },
+      { name: "PUBG: BATTLEGROUNDS", id: "438122941302046720" },
+      { name: "Terraria", id: "421410427481128961" },
+      { name: "Among Us", id: "759482725293883422" },
+      { name: "Geometry Dash", id: "380361375684755457" },
+      { name: "osu!", id: "367827983903490050" }
+    ];
+
+    function renderGames() {
+      const q = document.getElementById('search').value.toLowerCase();
+      const list = document.getElementById('gameList');
+      list.innerHTML = '';
+      GAMES.filter(g => g.name.toLowerCase().includes(q)).forEach(g => {
+        const div = document.createElement('div');
+        div.className = 'game-item';
+        div.innerHTML = `<span>${g.name}</span><span class="game-id">${g.id}</span>`;
+        div.onclick = () => {
+          document.getElementById('gameName').value = g.name;
+          document.getElementById('appId').value = g.id;
+        };
+        list.appendChild(div);
+      });
+    }
+
+    async function checkStatus() {
+      const res = await fetch('/status');
+      const data = await res.json();
+      const badge = document.getElementById('statusBadge');
+      if (data.active) {
+        badge.className = 'badge live';
+        badge.innerText = `LIVE: Playing ${data.game} (${data.user})`;
+      } else {
+        badge.className = 'badge';
+        badge.innerText = 'Status: Offline';
+      }
+    }
+
+    async function startRPC() {
+      const msg = document.getElementById('msg');
+      msg.innerText = 'Connecting to Discord...';
+      const body = {
+        token: document.getElementById('token').value,
+        appId: document.getElementById('appId').value,
+        gameName: document.getElementById('gameName').value,
+        details: document.getElementById('details').value,
+        state: document.getElementById('state').value,
+        statusType: document.getElementById('statusType').value
+      };
+      const res = await fetch('/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (data.success) {
+        msg.innerText = 'Activated! Check your Discord profile.';
+        checkStatus();
+      } else {
+        msg.innerText = data.error || 'Error starting RPC.';
+      }
+    }
+
+    async function stopRPC() {
+      await fetch('/stop', { method: 'POST' });
+      document.getElementById('msg').innerText = 'Stopped.';
+      checkStatus();
+    }
+
+    renderGames();
+    checkStatus();
+  </script>
+</body>
+</html>
