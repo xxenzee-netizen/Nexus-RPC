@@ -141,5 +141,58 @@ app.post('/connect-token', async (req, res) => {
   }
 });
 
-app.post('/disconnect
-         
+app.post('/disconnect', (req, res) => {
+  if (activeClient) {
+    activeClient.destroy();
+    activeClient = null;
+  }
+  sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
+  res.json({ success: true });
+});
+
+app.post('/set-game', (req, res) => {
+  if (!activeClient || !sessionInfo.connected) {
+    return res.status(400).json({ error: 'Gateway client not connected.' });
+  }
+
+  const { appId, gameName, details, state, statusType, largeImage, buttonLabel, buttonUrl } = req.body;
+  if (!appId || !gameName) {
+    return res.status(400).json({ error: 'Select a valid game.' });
+  }
+
+  try {
+    activeClient.user.setStatus(statusType || 'online');
+
+    const rpc = new RichPresence(activeClient)
+      .setApplicationId(appId.trim())
+      .setType('PLAYING')
+      .setName(gameName.trim())
+      .setStartTimestamp(Date.now());
+
+    if (details && details.trim()) rpc.setDetails(details.trim());
+    if (state && state.trim()) rpc.setState(state.trim());
+    if (largeImage && largeImage.trim()) rpc.setAssetsLargeImage(largeImage.trim());
+    rpc.setAssetsLargeText(gameName.trim());
+
+    if (buttonLabel && buttonLabel.trim() && buttonUrl && buttonUrl.trim()) {
+      rpc.addButton(buttonLabel.trim(), buttonUrl.trim());
+    }
+
+    activeClient.user.setActivity(rpc);
+    sessionInfo.activeGame = gameName.trim();
+    res.json({ success: true, session: sessionInfo });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to broadcast status.' });
+  }
+});
+
+app.post('/clear-game', (req, res) => {
+  if (activeClient && sessionInfo.connected) {
+    activeClient.user.setActivity(null);
+    sessionInfo.activeGame = null;
+  }
+  res.json({ success: true, session: sessionInfo });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Nexus RPC server running on port ${PORT}`));
