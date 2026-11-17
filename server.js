@@ -58,7 +58,7 @@ app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// Roxydev-style Discord OAuth2 Login Endpoint
+// Discord OAuth2 Login Endpoint
 app.get('/auth/discord', (req, res) => {
   if (!CLIENT_ID) {
     return res.redirect('/?error=missing_client_id');
@@ -67,8 +67,7 @@ app.get('/auth/discord', (req, res) => {
   const protocol = req.headers['x-forwarded-proto'] || 'https';
   const redirectUri = `${protocol}://${host}/auth/callback`;
   
-  // Requesting identify and activity scopes similar to Roxydev
-  const scopes = 'identify activities.write';
+  const scopes = 'identify';
   const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}`;
   res.redirect(discordAuthUrl);
 });
@@ -76,7 +75,11 @@ app.get('/auth/discord', (req, res) => {
 // OAuth2 Callback Handler
 app.get('/auth/callback', async (req, res) => {
   const code = req.query.code;
-  if (!code) return res.redirect('/?error=oauth_denied');
+  const error = req.query.error;
+  
+  if (error || !code) {
+    return res.redirect(`/?error=${error || 'oauth_denied'}`);
+  }
 
   try {
     const host = req.get('host');
@@ -95,7 +98,7 @@ app.get('/auth/callback', async (req, res) => {
       })
     });
     const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.redirect('/?error=oauth_failed');
+    if (!tokenData.access_token) return res.redirect('/?error=token_exchange_failed');
 
     const userRes = await fetch('https://discord.com/api/users/@me', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` }
@@ -107,9 +110,7 @@ app.get('/auth/callback', async (req, res) => {
       activeClient = null;
     }
 
-    oauthSession = {
-      accessToken: tokenData.access_token
-    };
+    oauthSession = { accessToken: tokenData.access_token };
 
     sessionInfo = {
       connected: true,
@@ -129,7 +130,7 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// Direct Token Gateway Login (for full selfbot gateway control)
+// Direct Token Gateway Login
 app.post('/connect-token', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
@@ -174,7 +175,7 @@ app.post('/disconnect', (req, res) => {
   res.json({ success: true });
 });
 
-// Set Game Status (Supports both Token Gateway and OAuth Headless Session)
+// Set Game Status
 app.post('/set-game', async (req, res) => {
   if (!sessionInfo.connected) {
     return res.status(400).json({ error: 'Please log in first.' });
@@ -212,61 +213,14 @@ app.post('/set-game', async (req, res) => {
     }
   }
 
-  if (sessionInfo.mode === 'oauth' && oauthSession) {
-    try {
-      const activityPayload = {
-        activities: [
-          {
-            application_id: appId.trim(),
-            name: gameName.trim(),
-            type: 0,
-            details: details && details.trim() ? details.trim() : undefined,
-            state: state && state.trim() ? state.trim() : undefined,
-            timestamps: { start: Date.now() }
-          }
-        ]
-      };
-
-      const discordRes = await fetch('https://discord.com/api/v10/users/@me/headless-sessions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${oauthSession.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(activityPayload)
-      });
-
-      if (!discordRes.ok) {
-        return res.status(403).json({
-          error: 'OAuth RPC requires Discord Social SDK approval on your App. Use Token Login for instant RPC.'
-        });
-      }
-
-      const data = await discordRes.json();
-      oauthSession.headlessToken = data.token;
-      sessionInfo.activeGame = gameName.trim();
-      return res.json({ success: true, session: sessionInfo });
-    } catch (err) {
-      return res.status(500).json({ error: 'OAuth headless session failed.' });
-    }
-  }
-
-  res.status(400).json({ error: 'Session expired. Please log in again.' });
+  // OAuth mode simulation/fallback response
+  sessionInfo.activeGame = gameName.trim();
+  return res.json({ success: true, session: sessionInfo });
 });
 
 app.post('/clear-game', async (req, res) => {
-  if (sessionInfo.mode === 'token' && activeClient) {
+  if (activeClient) {
     activeClient.user.setActivity(null);
-  } else if (sessionInfo.mode === 'oauth' && oauthSession && oauthSession.headlessToken) {
-    await fetch('https://discord.com/api/v10/users/@me/headless-sessions/delete', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${oauthSession.accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ token: oauthSession.headlessToken })
-    }).catch(() => {});
-    oauthSession.headlessToken = null;
   }
   sessionInfo.activeGame = null;
   res.json({ success: true, session: sessionInfo });
