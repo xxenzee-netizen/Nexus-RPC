@@ -9,21 +9,22 @@ app.use(express.json());
 const STATE_FILE = path.join(__dirname, 'nexus_state.json');
 
 let activeClient = null;
+let clientReadyPromise = null;
 let cachedGames = [];
 
-// Default persistent state structure
 let savedState = {
   token: null,
   activeRPC: null,
   customDraft: {
     activityType: 'PLAYING',
     statusType: 'online',
+    device: 'desktop',
     name: '',
-    appId: '',
     details: '',
     state: '',
-    timestampMode: 'now',
-    customTimestamp: '',
+    timestampMode: 'none',
+    customStartMins: '',
+    customEndMins: '',
     largeImage: '',
     largeText: '',
     smallImage: '',
@@ -64,9 +65,8 @@ function saveStateToDisk() {
 }
 
 function buildRichPresence(client, payload) {
-  const resolvedAppId = (payload.appId && payload.appId.trim())
-    ? payload.appId.trim()
-    : '1189283746519283746';
+  // Use a reliable default App ID if none provided
+  const resolvedAppId = '1189283746519283746';
 
   const rpc = new RichPresence(client)
     .setApplicationId(resolvedAppId)
@@ -76,15 +76,21 @@ function buildRichPresence(client, payload) {
   if (payload.details && payload.details.trim()) rpc.setDetails(payload.details.trim());
   if (payload.state && payload.state.trim()) rpc.setState(payload.state.trim());
 
+  // Timestamps handling in minutes
+  const now = Date.now();
   if (payload.timestampMode === 'now') {
-    rpc.setStartTimestamp(Date.now());
-  } else if (payload.timestampMode === 'custom' && payload.customTimestamp) {
-    const parsedTime = new Date(payload.customTimestamp).getTime();
-    if (!isNaN(parsedTime)) {
-      rpc.setStartTimestamp(parsedTime);
-    }
+    rpc.setStartTimestamp(now);
   } else if (payload.timestampMode === 'elapsed_1h') {
-    rpc.setStartTimestamp(Date.now() - 3600000);
+    rpc.setStartTimestamp(now - 3600000);
+  } else if (payload.timestampMode === 'custom') {
+    if (payload.customStartMins !== '' && !isNaN(payload.customStartMins)) {
+      const startMs = now - (parseFloat(payload.customStartMins) * 60 * 1000);
+      rpc.setStartTimestamp(startMs);
+    }
+    if (payload.customEndMins !== '' && !isNaN(payload.customEndMins)) {
+      const endMs = now + (parseFloat(payload.customEndMins) * 60 * 1000);
+      rpc.setEndTimestamp(endMs);
+    }
   }
 
   if (payload.largeImage && payload.largeImage.trim()) {
@@ -122,10 +128,19 @@ async function loginWithToken(token) {
     activeClient = null;
   }
 
-  return new Promise((resolve, reject) => {
-    const client = new Client({ checkUpdate: false });
+  clientReadyPromise = new Promise((resolve, reject) => {
+    const client = new Client({
+      checkUpdate: false,
+      intents: ['GUILDS']
+    });
+
+    const timeout = setTimeout(() => {
+      try { client.destroy(); } catch (e) {}
+      reject(new Error('Gateway connection timeout. Token may be invalid or ratelimited.'));
+    }, 15000);
 
     client.once('ready', () => {
+      clearTimeout(timeout);
       activeClient = client;
       sessionInfo = {
         connected: true,
@@ -135,10 +150,11 @@ async function loginWithToken(token) {
         activeDetails: null
       };
 
-      // Automatically restore saved RPC if one was active before restart/reload
+      // Restore active RPC if exists
       if (savedState.activeRPC && savedState.activeRPC.name) {
         try {
           client.user.setStatus(savedState.activeRPC.statusType || 'online');
+          client.user.setSettings({ ff: false, status: savedState.activeRPC.statusType || 'online', device: savedState.activeRPC.device || 'desktop' });
           const rpc = buildRichPresence(client, savedState.activeRPC);
           client.user.setActivity(rpc);
           sessionInfo.activeGame = savedState.activeRPC.name.trim();
@@ -152,19 +168,23 @@ async function loginWithToken(token) {
     });
 
     client.login(token.trim()).catch(err => {
+      clearTimeout(timeout);
       reject(err);
     });
   });
+
+  return clientReadyPromise;
 }
 
-// Auto-restore account login on server boot
+// Auto-restore on boot
 loadStateFromDisk();
 if (savedState.token) {
   loginWithToken(savedState.token)
     .then(() => console.log(`Auto-restored session for ${sessionInfo.user}`))
     .catch(() => {
-      console.log('Saved token expired or invalid. Clearing stored token.');
+      console.log('Saved token failed to connect. Clearing.');
       savedState.token = null;
+      savedState.activeRPC = null;
       saveStateToDisk();
     });
 }
@@ -182,9 +202,7 @@ async function loadGamesCache() {
           ? `https://cdn.discordapp.com/app-icons/${g.id}/${g.icon_hash}.png?size=128`
           : ''
       }));
-  } catch (err) {
-    console.error('Failed to fetch detectable games:', err.message);
-  }
+  } catch (err) {}
 }
 loadGamesCache();
 
@@ -235,7 +253,7 @@ app.post('/connect-token', async (req, res) => {
       customDraft: savedState.customDraft
     });
   } catch (err) {
-    res.status(401).json({ error: 'Invalid token or gateway connection failed.' });
+    res.status(401).json({ error: err.message || 'Invalid token or gateway connection failed.' });
   }
 });
 
@@ -245,6 +263,7 @@ app.post('/disconnect', (req, res) => {
     activeClient = null;
   }
   savedState.token = null;
+  savedState.activeRPC = null;
   saveStateToDisk();
 
   sessionInfo = {
@@ -265,9 +284,18 @@ app.post('/save-draft', (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/set-rpc', (req, res) => {
+app.post('/set-rpc', async (req, res) => {
   if (!sessionInfo.connected || !activeClient) {
-    return res.status(400).json({ error: 'Connect your Discord account first.' });
+    // If token is saved in state but client dropped, try auto-reconnecting once
+    if (savedState.token) {
+      try {
+        await loginWithToken(savedState.token);
+      } catch (e) {
+        return res.status(400).json({ error: 'Session expired. Please reconnect your token.' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Not connected to Discord gateway.' });
+    }
   }
 
   const payload = req.body;
@@ -277,6 +305,12 @@ app.post('/set-rpc', (req, res) => {
 
   try {
     activeClient.user.setStatus(payload.statusType || 'online');
+    if (typeof activeClient.user.setSettings === 'function') {
+      try {
+        activeClient.user.setSettings({ ff: false, status: payload.statusType || 'online', device: payload.device || 'desktop' });
+      } catch (e) {}
+    }
+
     const rpc = buildRichPresence(activeClient, payload);
     activeClient.user.setActivity(rpc);
 
@@ -288,14 +322,16 @@ app.post('/set-rpc', (req, res) => {
 
     return res.json({ success: true, session: sessionInfo, activeRPC: savedState.activeRPC });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Failed to update Discord presence.' });
+    console.error('RPC Broadcast Error:', err);
+    return res.status(500).json({ error: 'Failed to update presence. Try again.' });
   }
 });
 
 app.post('/clear-rpc', (req, res) => {
   if (sessionInfo.connected && activeClient) {
-    activeClient.user.setActivity(null);
+    try {
+      activeClient.user.setActivity(null);
+    } catch (e) {}
   }
   sessionInfo.activeGame = null;
   sessionInfo.activeDetails = null;
@@ -307,3 +343,4 @@ app.post('/clear-rpc', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Nexus RPC running on port ${PORT}`));
+      
