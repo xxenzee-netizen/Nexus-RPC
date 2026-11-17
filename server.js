@@ -5,9 +5,6 @@ const { Client, RichPresence } = require('discord.js-selfbot-v13');
 const app = express();
 app.use(express.json());
 
-const CLIENT_ID = process.env.CLIENT_ID || '';
-const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
-
 let activeClient = null;
 let sessionInfo = {
   connected: false,
@@ -56,62 +53,47 @@ app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// Official Discord OAuth2 Login (Roxydev Style)
-app.get('/auth/discord', (req, res) => {
-  if (!CLIENT_ID) return res.redirect('/?error=missing_client_id');
-  const host = req.get('host');
-  const protocol = req.headers['x-forwarded-proto'] || 'https';
-  const redirectUri = `${protocol}://${host}/auth/callback`;
-  
-  const scopes = 'identify rpc';
-  const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}`;
-  res.redirect(discordAuthUrl);
-});
-
-// OAuth2 Callback & Automated Gateway Bridge
-app.get('/auth/callback', async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.redirect('/?error=oauth_denied');
+// Gateway WebSocket Connection Endpoint (Accepts manual token or scraped token)
+app.post('/gateway-login', async (req, res) => {
+  const { token } = req.body;
+  if (!token || !token.trim()) {
+    return res.status(400).json({ error: 'Token is required.' });
+  }
 
   try {
-    const host = req.get('host');
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
-    const redirectUri = `${protocol}://${host}/auth/callback`;
+    if (activeClient) {
+      try { activeClient.destroy(); } catch (e) {}
+      activeClient = null;
+    }
 
-    const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code: code,
-        redirect_uri: redirectUri
-      })
+    const client = new Client({ 
+      checkUpdate: false,
+      intents: ['GUILDS', 'GUILD_MESSAGES'] 
     });
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.redirect('/?error=oauth_failed');
 
-    const userRes = await fetch('https://discord.com/api/users/@me', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` }
+    client.once('ready', () => {
+      activeClient = client;
+      sessionInfo = {
+        connected: true,
+        user: client.user.tag,
+        avatar: client.user.displayAvatarURL({ format: 'png', size: 128 }),
+        activeGame: null
+      };
+      if (!res.headersSent) {
+        res.json({ success: true, session: sessionInfo });
+      }
     });
-    const userData = await userRes.json();
 
-    // Store OAuth profile info
-    sessionInfo = {
-      connected: true,
-      user: userData.discriminator && userData.discriminator !== '0'
-        ? `${userData.username}#${userData.discriminator}`
-        : userData.username,
-      avatar: userData.avatar
-        ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png`
-        : 'https://cdn.discordapp.com/embed/avatars/0.png',
-      activeGame: null
-    };
+    client.on('error', (err) => {
+      console.error('Gateway socket error:', err);
+    });
 
-    res.redirect('/');
+    await client.login(token.trim());
   } catch (err) {
-    res.redirect('/?error=server_error');
+    sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
+    if (!res.headersSent) {
+      res.status(401).json({ error: 'Failed to establish gateway connection. Check your token.' });
+    }
   }
 });
 
@@ -124,10 +106,9 @@ app.post('/disconnect', (req, res) => {
   res.json({ success: true });
 });
 
-// Fully Operational Rich Presence Status Broadcaster
 app.post('/set-game', async (req, res) => {
-  if (!sessionInfo.connected) {
-    return res.status(400).json({ error: 'Please log in with Discord first.' });
+  if (!sessionInfo.connected || !activeClient) {
+    return res.status(400).json({ error: 'Gateway client is not active.' });
   }
 
   const { appId, gameName, details, state, statusType, largeImage, buttonLabel, buttonUrl } = req.body;
@@ -136,17 +117,38 @@ app.post('/set-game', async (req, res) => {
   }
 
   try {
+    activeClient.user.setStatus(statusType || 'online');
+
+    const rpc = new RichPresence(activeClient)
+      .setApplicationId(appId.trim())
+      .setType('PLAYING')
+      .setName(gameName.trim())
+      .setStartTimestamp(Date.now());
+
+    if (details && details.trim()) rpc.setDetails(details.trim());
+    if (state && state.trim()) rpc.setState(state.trim());
+    if (largeImage && largeImage.trim()) rpc.setAssetsLargeImage(largeImage.trim());
+    rpc.setAssetsLargeText(gameName.trim());
+
+    if (buttonLabel && buttonLabel.trim() && buttonUrl && buttonUrl.trim()) {
+      rpc.addButton(buttonLabel.trim(), buttonUrl.trim());
+    }
+
+    activeClient.user.setActivity(rpc);
     sessionInfo.activeGame = gameName.trim();
     return res.json({ success: true, session: sessionInfo });
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to update Rich Presence status.' });
+    return res.status(500).json({ error: 'Failed to dispatch RichPresence packet.' });
   }
 });
 
 app.post('/clear-game', async (req, res) => {
+  if (activeClient && activeClient.user) {
+    try { activeClient.user.setActivity(null); } catch (e) {}
+  }
   sessionInfo.activeGame = null;
   res.json({ success: true, session: sessionInfo });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Nexus RPC running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Nexus Headless Gateway running on port ${PORT}`));
