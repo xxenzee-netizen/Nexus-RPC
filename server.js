@@ -9,13 +9,14 @@ app.use(express.json());
 const STATE_FILE = path.join(__dirname, 'nexus_state.json');
 
 let activeClient = null;
-let clientReadyPromise = null;
+let currentDevice = 'desktop';
 let cachedGames = [];
 
 let savedState = {
   token: null,
   activeRPC: null,
   customDraft: {
+    appId: '',
     activityType: 'PLAYING',
     statusType: 'online',
     device: 'desktop',
@@ -64,19 +65,38 @@ function saveStateToDisk() {
   }
 }
 
+function getDeviceProperties(device) {
+  switch ((device || 'desktop').toLowerCase()) {
+    case 'xbox':
+      return { os: 'Xbox', browser: 'Discord Embedded', device: 'Xbox' };
+    case 'android':
+      return { os: 'Android', browser: 'Discord Android', device: 'Android' };
+    case 'ios':
+      return { os: 'iOS', browser: 'Discord iOS', device: 'iPhone' };
+    case 'web':
+      return { os: 'Windows', browser: 'Discord Web', device: '' };
+    case 'desktop':
+    default:
+      return { os: 'Windows', browser: 'Discord Client', device: '' };
+  }
+}
+
 function buildRichPresence(client, payload) {
-  // Use a reliable default App ID if none provided
-  const resolvedAppId = '1189283746519283746';
+  const cleanAppId = payload.appId && String(payload.appId).trim();
+  const resolvedAppId = cleanAppId || '1189283746519283746';
 
   const rpc = new RichPresence(client)
     .setApplicationId(resolvedAppId)
     .setType(payload.activityType || 'PLAYING')
     .setName(payload.name.trim());
 
+  if (payload.device && payload.device.toLowerCase() === 'xbox') {
+    rpc.setPlatform('xbox');
+  }
+
   if (payload.details && payload.details.trim()) rpc.setDetails(payload.details.trim());
   if (payload.state && payload.state.trim()) rpc.setState(payload.state.trim());
 
-  // Timestamps handling in minutes
   const now = Date.now();
   if (payload.timestampMode === 'now') {
     rpc.setStartTimestamp(now);
@@ -122,16 +142,36 @@ function buildRichPresence(client, payload) {
   return rpc;
 }
 
-async function loginWithToken(token) {
+function applyPresenceToClient(client, payload) {
+  const status = payload.statusType || 'online';
+  client.user.setStatus(status);
+  if (typeof client.user.setPresence === 'function') {
+    const rpc = buildRichPresence(client, payload);
+    client.user.setPresence({
+      status,
+      activities: [rpc]
+    });
+  } else {
+    const rpc = buildRichPresence(client, payload);
+    client.user.setActivity(rpc);
+  }
+}
+
+async function loginWithToken(token, deviceOverride = null) {
+  const targetDevice = (deviceOverride || (savedState.activeRPC && savedState.activeRPC.device) || 'desktop').toLowerCase();
+
   if (activeClient) {
     try { activeClient.destroy(); } catch (e) {}
     activeClient = null;
   }
 
-  clientReadyPromise = new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const client = new Client({
       checkUpdate: false,
-      intents: ['GUILDS']
+      intents: ['GUILDS'],
+      ws: {
+        properties: getDeviceProperties(targetDevice)
+      }
     });
 
     const timeout = setTimeout(() => {
@@ -142,6 +182,8 @@ async function loginWithToken(token) {
     client.once('ready', () => {
       clearTimeout(timeout);
       activeClient = client;
+      currentDevice = targetDevice;
+
       sessionInfo = {
         connected: true,
         user: client.user.tag,
@@ -150,13 +192,9 @@ async function loginWithToken(token) {
         activeDetails: null
       };
 
-      // Restore active RPC if exists
       if (savedState.activeRPC && savedState.activeRPC.name) {
         try {
-          client.user.setStatus(savedState.activeRPC.statusType || 'online');
-          client.user.setSettings({ ff: false, status: savedState.activeRPC.statusType || 'online', device: savedState.activeRPC.device || 'desktop' });
-          const rpc = buildRichPresence(client, savedState.activeRPC);
-          client.user.setActivity(rpc);
+          applyPresenceToClient(client, savedState.activeRPC);
           sessionInfo.activeGame = savedState.activeRPC.name.trim();
           sessionInfo.activeDetails = savedState.activeRPC.details || null;
         } catch (err) {
@@ -172,8 +210,6 @@ async function loginWithToken(token) {
       reject(err);
     });
   });
-
-  return clientReadyPromise;
 }
 
 // Auto-restore on boot
@@ -285,34 +321,24 @@ app.post('/save-draft', (req, res) => {
 });
 
 app.post('/set-rpc', async (req, res) => {
-  if (!sessionInfo.connected || !activeClient) {
-    // If token is saved in state but client dropped, try auto-reconnecting once
-    if (savedState.token) {
-      try {
-        await loginWithToken(savedState.token);
-      } catch (e) {
-        return res.status(400).json({ error: 'Session expired. Please reconnect your token.' });
-      }
-    } else {
-      return res.status(400).json({ error: 'Not connected to Discord gateway.' });
-    }
-  }
-
   const payload = req.body;
   if (!payload.name || !payload.name.trim()) {
     return res.status(400).json({ error: 'Activity name is required.' });
   }
 
-  try {
-    activeClient.user.setStatus(payload.statusType || 'online');
-    if (typeof activeClient.user.setSettings === 'function') {
-      try {
-        activeClient.user.setSettings({ ff: false, status: payload.statusType || 'online', device: payload.device || 'desktop' });
-      } catch (e) {}
-    }
+  const requestedDevice = (payload.device || 'desktop').toLowerCase();
 
-    const rpc = buildRichPresence(activeClient, payload);
-    activeClient.user.setActivity(rpc);
+  try {
+    // Reconnect with new Gateway device properties if device changed or client dropped
+    if (!sessionInfo.connected || !activeClient || currentDevice !== requestedDevice) {
+      if (!savedState.token) {
+        return res.status(400).json({ error: 'Not connected to Discord gateway.' });
+      }
+      savedState.activeRPC = payload;
+      await loginWithToken(savedState.token, requestedDevice);
+    } else {
+      applyPresenceToClient(activeClient, payload);
+    }
 
     sessionInfo.activeGame = payload.name.trim();
     sessionInfo.activeDetails = payload.details ? payload.details.trim() : null;
@@ -343,4 +369,3 @@ app.post('/clear-rpc', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Nexus RPC running on port ${PORT}`));
-      
