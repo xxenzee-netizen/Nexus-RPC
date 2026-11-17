@@ -1,7 +1,6 @@
 {
   "name": "nexus-rpc",
   "version": "1.0.0",
-  "description": "Discord Rich Presence Cloud & Manual Gateway",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
