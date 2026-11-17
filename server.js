@@ -53,8 +53,7 @@ app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// Automatically connect using the extracted token from the frontend popup
-app.post('/api/auto-login', async (req, res) => {
+app.post('/connect-token', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
     return res.status(400).json({ error: 'Token is required.' });
@@ -82,7 +81,7 @@ app.post('/api/auto-login', async (req, res) => {
     await client.login(token.trim());
   } catch (err) {
     sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
-    res.status(401).json({ error: 'Invalid Discord token extracted.' });
+    res.status(401).json({ error: 'Invalid Discord token provided.' });
   }
 });
 
