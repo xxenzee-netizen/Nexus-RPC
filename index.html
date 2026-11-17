@@ -41,9 +41,12 @@
     .game-id { font-size: 10px; color: var(--muted); }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .btn-row { display: flex; gap: 8px; margin-top: 14px; }
-    button { width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 13px; font-weight: 800; cursor: pointer; text-transform: uppercase; }
+    button, .btn-oauth { width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 13px; font-weight: 800; cursor: pointer; text-transform: uppercase; display: block; text-align: center; text-decoration: none; }
+    .btn-oauth { background: #5865F2; color: #fff; box-shadow: 0 0 12px rgba(88, 101, 242, 0.35); }
+    .btn-oauth:hover { background: #4752c4; }
     .btn-red { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
     .btn-dark { background: #181822; color: var(--muted); border: 1px solid var(--border); }
+    .divider { text-align: center; font-size: 10px; font-weight: 800; color: var(--muted); margin: 12px 0; }
     .toast { margin-top: 12px; font-size: 12px; text-align: center; color: var(--muted); font-weight: 600; }
     .hidden { display: none !important; }
   </style>
@@ -55,8 +58,12 @@
       <div id="connPill" class="status-badge">Offline</div>
     </div>
 
-    <!-- Discord Token Login Box -->
+    <!-- Auth Box: Cloud OAuth2 + Manual Token -->
     <div id="loginBox" class="section">
+      <a href="/auth/discord" class="btn-oauth">Auth with Discord</a>
+
+      <div class="divider">— OR MANUAL TOKEN —</div>
+
       <label>Discord Account Token</label>
       <input type="password" id="tokenInput" placeholder="Paste your user token here..." />
       <div class="btn-row" style="margin-top: 10px;">
@@ -111,6 +118,11 @@
     let currentPage = 1, isLoading = false, hasMoreGames = true;
 
     window.onload = () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('error')) {
+        showToast(`Auth error: ${params.get('error')}`, true);
+        window.history.replaceState({}, document.title, '/');
+      }
       checkStatus();
       loadMoreGames(true);
     };
@@ -130,7 +142,7 @@
     function updateUI(session) {
       if (session && session.connected) {
         document.getElementById('connPill').className = 'status-badge online';
-        document.getElementById('connPill').innerText = 'Connected';
+        document.getElementById('connPill').innerText = session.mode === 'oauth' ? 'Cloud OAuth' : 'Connected';
         document.getElementById('loginBox').classList.add('hidden');
         document.getElementById('connectedBox').classList.remove('hidden');
         document.getElementById('userName').innerText = session.user;
