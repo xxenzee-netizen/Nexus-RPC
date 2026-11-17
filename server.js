@@ -5,6 +5,11 @@ const { Client, RichPresence } = require('discord.js-selfbot-v13');
 const app = express();
 app.use(express.json());
 
+// Credentials from environment variables (Render / Developer Portal)
+const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+const REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'http://localhost:3000/auth/discord/callback';
+
 let activeClient = null;
 let sessionInfo = {
   connected: false,
@@ -53,7 +58,53 @@ app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// Gateway WebSocket Connection Endpoint (Accepts manual token or scraped token)
+// --- CLOUD OAUTH2 LOGIN ROUTES ---
+app.get('/auth/discord', (req, res) => {
+  if (!CLIENT_ID) {
+    return res.status(400).send('DISCORD_CLIENT_ID environment variable is not configured.');
+  }
+  const authUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify`;
+  res.redirect(authUrl);
+});
+
+app.get('/auth/discord/callback', async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.redirect('/?error=NoCodeProvided');
+
+  try {
+    const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code: code,
+        redirect_uri: REDIRECT_URI,
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) return res.redirect('/?error=TokenExchangeFailed');
+
+    const userRes = await fetch('https://discord.com/api/users/@me', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` }
+    });
+    const userData = await userRes.json();
+
+    sessionInfo = {
+      connected: true,
+      user: `${userData.username}#${userData.discriminator || '0'}`,
+      avatar: userData.avatar ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png` : 'https://cdn.discordapp.com/embed/avatars/0.png',
+      activeGame: null
+    };
+
+    res.redirect('/');
+  } catch (err) {
+    res.redirect('/?error=OAuthException');
+  }
+});
+
+// --- MANUAL TOKEN GATEWAY LOGIN ---
 app.post('/gateway-login', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
@@ -84,15 +135,11 @@ app.post('/gateway-login', async (req, res) => {
       }
     });
 
-    client.on('error', (err) => {
-      console.error('Gateway socket error:', err);
-    });
-
     await client.login(token.trim());
   } catch (err) {
     sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
     if (!res.headersSent) {
-      res.status(401).json({ error: 'Failed to establish gateway connection. Check your token.' });
+      res.status(401).json({ error: 'Gateway connection failed. Check your token.' });
     }
   }
 });
@@ -151,4 +198,4 @@ app.post('/clear-game', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Nexus Headless Gateway running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Nexus Server running on port ${PORT}`));
