@@ -5,21 +5,14 @@ const { Client, RichPresence } = require('discord.js-selfbot-v13');
 const app = express();
 app.use(express.json());
 
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '1572028430600511649';
-const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
-const REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'https://rpc-test-rj4l.onrender.com/auth/discord/callback';
-
 let activeClient = null;
-let oauthSession = {
-  accessToken: null
-};
 
 let sessionInfo = {
   connected: false,
-  mode: null,
   user: null,
   avatar: null,
-  activeGame: null
+  activeGame: null,
+  activeDetails: null
 };
 
 let cachedGames = [];
@@ -33,9 +26,13 @@ async function loadGamesCache() {
       .map(g => ({
         id: g.id,
         name: g.name,
-        icon: g.icon_hash ? `https://cdn.discordapp.com/app-icons/${g.id}/${g.icon_hash}.png?size=64` : ''
+        icon: g.icon_hash
+          ? `https://cdn.discordapp.com/app-icons/${g.id}/${g.icon_hash}.png?size=128`
+          : ''
       }));
-  } catch (err) {}
+  } catch (err) {
+    console.error('Failed to fetch detectable games:', err.message);
+  }
 }
 loadGamesCache();
 
@@ -47,7 +44,7 @@ app.get('/games', async (req, res) => {
   if (cachedGames.length === 0) await loadGamesCache();
   const q = (req.query.q || '').toLowerCase().trim();
   const page = parseInt(req.query.page) || 1;
-  const limit = 30;
+  const limit = 36;
 
   let filtered = cachedGames;
   if (q) {
@@ -65,64 +62,10 @@ app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// --- OAUTH2 LOGIN ROUTE WITH YOUR EXACT LINK ---
-app.get('/auth/discord', (req, res) => {
-  const authUrl = `https://discord.com/oauth2/authorize?client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=openid%20sdk.social_layer_presence%20identify`;
-  res.redirect(authUrl);
-});
-
-app.get('/auth/discord/callback', async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.redirect('/?error=NoCodeProvided');
-
-  try {
-    const tokenRes = await fetch('https://discord.com/api/v10/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code: code,
-        redirect_uri: REDIRECT_URI
-      })
-    });
-
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) {
-      return res.redirect('/?error=TokenExchangeFailed');
-    }
-
-    const userRes = await fetch('https://discord.com/api/v10/users/@me', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` }
-    });
-    const userData = await userRes.json();
-
-    oauthSession = {
-      accessToken: tokenData.access_token
-    };
-
-    sessionInfo = {
-      connected: true,
-      mode: 'oauth',
-      user: userData.global_name || userData.username,
-      avatar: userData.avatar
-        ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png`
-        : 'https://cdn.discordapp.com/embed/avatars/0.png',
-      activeGame: null
-    };
-
-    res.redirect('/');
-  } catch (err) {
-    res.redirect('/?error=OAuthException');
-  }
-});
-
-// --- MANUAL TOKEN GATEWAY LOGIN ---
 app.post('/connect-token', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
-    return res.status(400).json({ error: 'Token missing.' });
+    return res.status(400).json({ error: 'Please provide a Discord token.' });
   }
 
   try {
@@ -130,7 +73,6 @@ app.post('/connect-token', async (req, res) => {
       activeClient.destroy();
       activeClient = null;
     }
-    oauthSession = { accessToken: null };
 
     const client = new Client({ checkUpdate: false });
 
@@ -138,79 +80,134 @@ app.post('/connect-token', async (req, res) => {
       activeClient = client;
       sessionInfo = {
         connected: true,
-        mode: 'token',
         user: client.user.tag,
         avatar: client.user.displayAvatarURL({ format: 'png', size: 128 }),
-        activeGame: null
+        activeGame: null,
+        activeDetails: null
       };
       res.json({ success: true, session: sessionInfo });
     });
 
     await client.login(token.trim());
   } catch (err) {
-    res.status(401).json({ error: 'Invalid token or authentication failed.' });
+    res.status(401).json({ error: 'Invalid token or gateway connection failed.' });
   }
 });
 
-app.post('/disconnect', async (req, res) => {
+app.post('/disconnect', (req, res) => {
   if (activeClient) {
     activeClient.destroy();
     activeClient = null;
   }
-  oauthSession = { accessToken: null };
-  sessionInfo = { connected: false, mode: null, user: null, avatar: null, activeGame: null };
+  sessionInfo = {
+    connected: false,
+    user: null,
+    avatar: null,
+    activeGame: null,
+    activeDetails: null
+  };
   res.json({ success: true });
 });
 
-app.post('/set-game', async (req, res) => {
-  if (!sessionInfo.connected) {
-    return res.status(400).json({ error: 'Not connected.' });
+app.post('/set-rpc', (req, res) => {
+  if (!sessionInfo.connected || !activeClient) {
+    return res.status(400).json({ error: 'Connect your Discord account first.' });
   }
 
-  const { appId, gameName, details, state, statusType, largeImage, buttonLabel, buttonUrl } = req.body;
-  if (!appId || !gameName) {
-    return res.status(400).json({ error: 'Select a valid game.' });
+  const {
+    appId,
+    activityType,
+    name,
+    details,
+    state,
+    statusType,
+    largeImage,
+    largeText,
+    smallImage,
+    smallText,
+    timestampMode,
+    customTimestamp,
+    buttons
+  } = req.body;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Activity name is required.' });
   }
 
-  // Manual Token Gateway Broadcast (Guaranteed working RPC)
-  if (sessionInfo.mode === 'token' && activeClient) {
-    try {
-      activeClient.user.setStatus(statusType || 'online');
-      const rpc = new RichPresence(activeClient)
-        .setApplicationId(appId.trim())
-        .setType('PLAYING')
-        .setName(gameName.trim())
-        .setStartTimestamp(Date.now());
+  try {
+    activeClient.user.setStatus(statusType || 'online');
 
-      if (details && details.trim()) rpc.setDetails(details.trim());
-      if (state && state.trim()) rpc.setState(state.trim());
-      if (largeImage && largeImage.trim()) rpc.setAssetsLargeImage(largeImage.trim());
-      rpc.setAssetsLargeText(gameName.trim());
+    // Default fallback Application ID if user leaves Custom RPC App ID blank
+    const resolvedAppId = (appId && appId.trim()) ? appId.trim() : '1189283746519283746';
 
-      if (buttonLabel && buttonLabel.trim() && buttonUrl && buttonUrl.trim()) {
-        rpc.addButton(buttonLabel.trim(), buttonUrl.trim());
+    const rpc = new RichPresence(activeClient)
+      .setApplicationId(resolvedAppId)
+      .setType(activityType || 'PLAYING')
+      .setName(name.trim());
+
+    if (details && details.trim()) rpc.setDetails(details.trim());
+    if (state && state.trim()) rpc.setState(state.trim());
+
+    // Timestamps
+    if (timestampMode === 'now') {
+      rpc.setStartTimestamp(Date.now());
+    } else if (timestampMode === 'custom' && customTimestamp) {
+      const parsedTime = new Date(customTimestamp).getTime();
+      if (!isNaN(parsedTime)) {
+        rpc.setStartTimestamp(parsedTime);
       }
-
-      activeClient.user.setActivity(rpc);
-      sessionInfo.activeGame = gameName.trim();
-      return res.json({ success: true, session: sessionInfo });
-    } catch (err) {
-      return res.status(500).json({ error: 'Failed to broadcast status.' });
+    } else if (timestampMode === 'elapsed_1h') {
+      rpc.setStartTimestamp(Date.now() - 3600000);
     }
-  }
 
-  // If using OAuth alone without a gateway token, prompt token use or return notice
-  res.status(400).json({ error: 'OAuth login verifies your profile. Use the Manual Token box to stream gateway RPC status.' });
+    // Images & Hover Texts
+    if (largeImage && largeImage.trim()) {
+      rpc.setAssetsLargeImage(largeImage.trim());
+      if (largeText && largeText.trim()) {
+        rpc.setAssetsLargeText(largeText.trim());
+      }
+    }
+
+    if (smallImage && smallImage.trim()) {
+      rpc.setAssetsSmallImage(smallImage.trim());
+      if (smallText && smallText.trim()) {
+        rpc.setAssetsSmallText(smallText.trim());
+      }
+    }
+
+    // Up to 2 Buttons
+    if (Array.isArray(buttons)) {
+      buttons.slice(0, 2).forEach(btn => {
+        if (btn.label && btn.label.trim() && btn.url && btn.url.trim()) {
+          let validUrl = btn.url.trim();
+          if (!/^https?:\/\//i.test(validUrl)) {
+            validUrl = 'https://' + validUrl;
+          }
+          rpc.addButton(btn.label.trim(), validUrl);
+        }
+      });
+    }
+
+    activeClient.user.setActivity(rpc);
+    sessionInfo.activeGame = name.trim();
+    sessionInfo.activeDetails = details ? details.trim() : null;
+
+    return res.json({ success: true, session: sessionInfo });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update Discord presence.' });
+  }
 });
 
-app.post('/clear-game', async (req, res) => {
-  if (sessionInfo.mode === 'token' && activeClient) {
+app.post('/clear-rpc', (req, res) => {
+  if (sessionInfo.connected && activeClient) {
     activeClient.user.setActivity(null);
   }
   sessionInfo.activeGame = null;
+  sessionInfo.activeDetails = null;
   res.json({ success: true, session: sessionInfo });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-  
+app.listen(PORT, () => console.log(`Nexus RPC running on port ${PORT}`));
+               
