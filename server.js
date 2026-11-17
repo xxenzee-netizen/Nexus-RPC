@@ -5,10 +5,8 @@ const { Client, RichPresence } = require('discord.js-selfbot-v13');
 const app = express();
 app.use(express.json());
 
-// Credentials from environment variables (Render / Developer Portal)
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
-const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
-const REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'http://localhost:3000/auth/discord/callback';
+const CLIENT_ID = process.env.CLIENT_ID || 'YOUR_DISCORD_CLIENT_ID';
+const CLIENT_SECRET = process.env.CLIENT_SECRET || 'YOUR_DISCORD_CLIENT_SECRET';
 
 let activeClient = null;
 let sessionInfo = {
@@ -30,7 +28,10 @@ async function loadGamesCache() {
         name: g.name,
         icon: g.icon_hash ? `https://cdn.discordapp.com/app-icons/${g.id}/${g.icon_hash}.png?size=64` : ''
       }));
-  } catch (err) {}
+    console.log(`Loaded ${cachedGames.length} official Discord games.`);
+  } catch (err) {
+    console.error('Failed to pre-load games:', err.message);
+  }
 }
 loadGamesCache();
 
@@ -38,6 +39,7 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Paginated & searchable games catalog endpoint
 app.get('/games', async (req, res) => {
   if (cachedGames.length === 0) await loadGamesCache();
   const q = (req.query.q || '').toLowerCase().trim();
@@ -45,11 +47,15 @@ app.get('/games', async (req, res) => {
   const limit = 30;
 
   let filtered = cachedGames;
-  if (q) filtered = cachedGames.filter(g => g.name.toLowerCase().includes(q));
+  if (q) {
+    filtered = cachedGames.filter(g => g.name.toLowerCase().includes(q));
+  }
 
   const start = (page - 1) * limit;
+  const paginated = filtered.slice(start, start + limit);
+
   res.json({
-    games: filtered.slice(start, start + limit),
+    games: paginated,
     hasMore: start + limit < filtered.length
   });
 });
@@ -58,20 +64,22 @@ app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// --- CLOUD OAUTH2 LOGIN ROUTES ---
+// Force HTTPS OAuth2 Redirect
 app.get('/auth/discord', (req, res) => {
-  if (!CLIENT_ID) {
-    return res.status(400).send('DISCORD_CLIENT_ID environment variable is not configured.');
-  }
-  const authUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify`;
-  res.redirect(authUrl);
+  const host = req.get('host');
+  const redirectUri = `https://${host}/auth/callback`;
+  const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify`;
+  res.redirect(discordAuthUrl);
 });
 
-app.get('/auth/discord/callback', async (req, res) => {
+// OAuth2 Callback Endpoint
+app.get('/auth/callback', async (req, res) => {
   const code = req.query.code;
-  if (!code) return res.redirect('/?error=NoCodeProvided');
+  if (!code) return res.redirect('/?error=no_code');
 
   try {
+    const host = req.get('host');
+    const redirectUri = `https://${host}/auth/callback`;
     const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -80,11 +88,11 @@ app.get('/auth/discord/callback', async (req, res) => {
         client_secret: CLIENT_SECRET,
         grant_type: 'authorization_code',
         code: code,
-        redirect_uri: REDIRECT_URI,
+        redirect_uri: redirectUri
       })
     });
     const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.redirect('/?error=TokenExchangeFailed');
+    if (!tokenData.access_token) return res.redirect('/?error=oauth_failed');
 
     const userRes = await fetch('https://discord.com/api/users/@me', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` }
@@ -100,67 +108,56 @@ app.get('/auth/discord/callback', async (req, res) => {
 
     res.redirect('/');
   } catch (err) {
-    res.redirect('/?error=OAuthException');
+    res.redirect('/?error=server_error');
   }
 });
 
-// --- MANUAL TOKEN GATEWAY LOGIN ---
-app.post('/gateway-login', async (req, res) => {
+// Gateway selfbot connection endpoint
+app.post('/connect-token', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
-    return res.status(400).json({ error: 'Token is required.' });
+    return res.status(400).json({ error: 'Token missing.' });
   }
 
   try {
     if (activeClient) {
-      try { activeClient.destroy(); } catch (e) {}
+      activeClient.destroy();
       activeClient = null;
     }
 
-    const client = new Client({ 
-      checkUpdate: false,
-      intents: ['GUILDS', 'GUILD_MESSAGES'] 
-    });
+    const client = new Client({ checkUpdate: false });
 
     client.once('ready', () => {
       activeClient = client;
-      sessionInfo = {
-        connected: true,
-        user: client.user.tag,
-        avatar: client.user.displayAvatarURL({ format: 'png', size: 128 }),
-        activeGame: null
-      };
-      if (!res.headersSent) {
-        res.json({ success: true, session: sessionInfo });
-      }
+      sessionInfo.connected = true;
+      sessionInfo.user = client.user.tag;
+      sessionInfo.avatar = client.user.displayAvatarURL({ format: 'png', size: 128 });
+      res.json({ success: true, session: sessionInfo });
     });
 
     await client.login(token.trim());
   } catch (err) {
-    sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
-    if (!res.headersSent) {
-      res.status(401).json({ error: 'Gateway connection failed. Check your token.' });
-    }
+    res.status(401).json({ error: 'Invalid token or authentication failed.' });
   }
 });
 
 app.post('/disconnect', (req, res) => {
   if (activeClient) {
-    try { activeClient.destroy(); } catch (e) {}
+    activeClient.destroy();
     activeClient = null;
   }
   sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
   res.json({ success: true });
 });
 
-app.post('/set-game', async (req, res) => {
-  if (!sessionInfo.connected || !activeClient) {
-    return res.status(400).json({ error: 'Gateway client is not active.' });
+app.post('/set-game', (req, res) => {
+  if (!activeClient || !sessionInfo.connected) {
+    return res.status(400).json({ error: 'Gateway client not connected.' });
   }
 
   const { appId, gameName, details, state, statusType, largeImage, buttonLabel, buttonUrl } = req.body;
   if (!appId || !gameName) {
-    return res.status(400).json({ error: 'Select a game first.' });
+    return res.status(400).json({ error: 'Select a valid game.' });
   }
 
   try {
@@ -183,19 +180,19 @@ app.post('/set-game', async (req, res) => {
 
     activeClient.user.setActivity(rpc);
     sessionInfo.activeGame = gameName.trim();
-    return res.json({ success: true, session: sessionInfo });
+    res.json({ success: true, session: sessionInfo });
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to dispatch RichPresence packet.' });
+    res.status(500).json({ error: 'Failed to broadcast status.' });
   }
 });
 
-app.post('/clear-game', async (req, res) => {
-  if (activeClient && activeClient.user) {
-    try { activeClient.user.setActivity(null); } catch (e) {}
+app.post('/clear-game', (req, res) => {
+  if (activeClient && sessionInfo.connected) {
+    activeClient.user.setActivity(null);
+    sessionInfo.activeGame = null;
   }
-  sessionInfo.activeGame = null;
   res.json({ success: true, session: sessionInfo });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Nexus Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Nexus RPC server running on port ${PORT}`));
