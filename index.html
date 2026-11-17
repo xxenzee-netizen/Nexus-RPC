@@ -58,7 +58,7 @@
       <div id="connPill" class="status-badge">Offline</div>
     </div>
 
-    <!-- Auth Box: Cloud OAuth2 + Manual Token -->
+    <!-- Login Box -->
     <div id="loginBox" class="section">
       <a href="/auth/discord" class="btn-oauth">Auth with Discord</a>
 
@@ -67,7 +67,7 @@
       <label>Discord Account Token</label>
       <input type="password" id="tokenInput" placeholder="Paste your user token here..." />
       <div class="btn-row" style="margin-top: 10px;">
-        <button class="btn-red" onclick="connectToken()">Connect Account</button>
+        <button id="connectBtn" class="btn-red" onclick="connectToken()">Connect Account</button>
       </div>
     </div>
 
@@ -142,7 +142,7 @@
     function updateUI(session) {
       if (session && session.connected) {
         document.getElementById('connPill').className = 'status-badge online';
-        document.getElementById('connPill').innerText = session.mode === 'oauth' ? 'Cloud OAuth' : 'Connected';
+        document.getElementById('connPill').innerText = session.mode === 'oauth' ? 'OAuth Logged In' : 'Connected';
         document.getElementById('loginBox').classList.add('hidden');
         document.getElementById('connectedBox').classList.remove('hidden');
         document.getElementById('userName').innerText = session.user;
@@ -162,7 +162,12 @@
         showToast('Please enter your token!', true);
         return;
       }
-      showToast('Connecting to Discord...');
+      
+      const connectBtn = document.getElementById('connectBtn');
+      connectBtn.disabled = true;
+      connectBtn.innerText = 'Connecting...';
+      showToast('Connecting to Discord gateway...');
+
       try {
         const res = await fetch('/connect-token', {
           method: 'POST',
@@ -179,6 +184,9 @@
         }
       } catch (err) {
         showToast('Failed to connect', true);
+      } finally {
+        connectBtn.disabled = false;
+        connectBtn.innerText = 'Connect Account';
       }
     }
 
