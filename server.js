@@ -23,6 +23,8 @@ let savedState = {
     name: '',
     details: '',
     state: '',
+    partySize: '',
+    partyMax: '',
     timestampMode: 'none',
     customStartMins: '',
     customEndMins: '',
@@ -73,6 +75,7 @@ function getDeviceProperties(device) {
       return { os: 'Android', browser: 'Discord Android', device: 'Android' };
     case 'ios':
       return { os: 'iOS', browser: 'Discord iOS', device: 'iPhone' };
+    case 'browser':
     case 'web':
       return { os: 'Windows', browser: 'Discord Web', device: '' };
     case 'desktop':
@@ -96,6 +99,16 @@ function buildRichPresence(client, payload) {
 
   if (payload.details && payload.details.trim()) rpc.setDetails(payload.details.trim());
   if (payload.state && payload.state.trim()) rpc.setState(payload.state.trim());
+
+  const pSize = parseInt(payload.partySize, 10);
+  const pMax = parseInt(payload.partyMax, 10);
+  if (!isNaN(pSize) && !isNaN(pMax) && pSize > 0 && pMax >= pSize) {
+    rpc.setParty({
+      id: 'nexus_party_' + resolvedAppId,
+      current: pSize,
+      max: pMax
+    });
+  }
 
   const now = Date.now();
   if (payload.timestampMode === 'now') {
@@ -145,14 +158,13 @@ function buildRichPresence(client, payload) {
 function applyPresenceToClient(client, payload) {
   const status = payload.statusType || 'online';
   client.user.setStatus(status);
+  const rpc = buildRichPresence(client, payload);
   if (typeof client.user.setPresence === 'function') {
-    const rpc = buildRichPresence(client, payload);
     client.user.setPresence({
       status,
       activities: [rpc]
     });
   } else {
-    const rpc = buildRichPresence(client, payload);
     client.user.setActivity(rpc);
   }
 }
@@ -329,7 +341,6 @@ app.post('/set-rpc', async (req, res) => {
   const requestedDevice = (payload.device || 'desktop').toLowerCase();
 
   try {
-    // Reconnect with new Gateway device properties if device changed or client dropped
     if (!sessionInfo.connected || !activeClient || currentDevice !== requestedDevice) {
       if (!savedState.token) {
         return res.status(400).json({ error: 'Not connected to Discord gateway.' });
@@ -369,3 +380,4 @@ app.post('/clear-rpc', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Nexus RPC running on port ${PORT}`));
+
