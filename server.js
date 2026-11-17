@@ -1,4 +1,5 @@
 const express = require('express');
+const { Client, RichPresence } = require('discord.js-selfbot-v13');
 const path = require('path');
 
 const app = express();
@@ -8,14 +9,13 @@ const CLIENT_ID = process.env.CLIENT_ID || '1572028430600511649';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || 'YOUR_DISCORD_CLIENT_SECRET';
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://onrender.com';
 
+let activeClient = null;
 let sessionInfo = {
   connected: false,
+  mode: null,
   user: null,
   avatar: null,
-  accessToken: null,
-  refreshToken: null,
-  activeGame: null,
-  headlessSessionToken: null
+  activeGame: null
 };
 
 let cachedGames = [];
@@ -42,7 +42,6 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Paginated & searchable games catalog endpoint
 app.get('/games', async (req, res) => {
   if (cachedGames.length === 0) await loadGamesCache();
   const q = (req.query.q || '').toLowerCase().trim();
@@ -63,24 +62,17 @@ app.get('/games', async (req, res) => {
   });
 });
 
-// Frontend status check (never exposes tokens to browser)
 app.get('/status', (req, res) => {
-  res.json({
-    connected: sessionInfo.connected,
-    user: sessionInfo.user,
-    avatar: sessionInfo.avatar,
-    activeGame: sessionInfo.activeGame
-  });
+  res.json(sessionInfo);
 });
 
-// 1. OAuth2 Login Redirect
+// 1. OAuth2 Login (Uses safe 'identify' scope so Discord never rejects it)
 app.get('/auth/discord', (req, res) => {
-  const scopes = 'rpc.activities.write+rpc+identify';
-  const discordAuthUrl = `https://discord.com{CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scopes}`;
+  const discordAuthUrl = `https://discord.com{CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify`;
   res.redirect(discordAuthUrl);
 });
 
-// 2. OAuth2 Callback Endpoint
+// 2. OAuth2 Callback
 app.get('/auth/callback', async (req, res) => {
   const code = req.query.code;
   if (!code) return res.redirect('/?error=no_code');
@@ -100,7 +92,7 @@ app.get('/auth/callback', async (req, res) => {
 
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) {
-      console.error('Discord OAuth Token Error:', tokenData);
+      console.error('OAuth Error:', tokenData);
       return res.redirect('/?error=oauth_failed');
     }
 
@@ -109,56 +101,87 @@ app.get('/auth/callback', async (req, res) => {
     });
     const userData = await userRes.json();
 
+    if (activeClient) {
+      try { activeClient.destroy(); } catch (e) {}
+      activeClient = null;
+    }
+
     sessionInfo = {
       connected: true,
+      mode: 'oauth',
       user: userData.discriminator && userData.discriminator !== '0'
         ? `${userData.username}#${userData.discriminator}`
         : userData.username,
       avatar: userData.avatar
         ? `https://discordapp.com{userData.id}/${userData.avatar}.png`
         : 'https://discordapp.com',
-      accessToken: tokenData.access_token,
-      refreshToken: tokenData.refresh_token,
-      activeGame: null,
-      headlessSessionToken: null
+      activeGame: null
     };
 
     res.redirect('/');
   } catch (err) {
-    console.error('OAuth Callback Error:', err);
+    console.error(err);
     res.redirect('/?error=server_error');
   }
 });
 
-// 3. Logout / Disconnect
-app.post('/disconnect', async (req, res) => {
-  if (sessionInfo.connected && sessionInfo.accessToken && sessionInfo.headlessSessionToken) {
-    await fetch('https://discord.com', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${sessionInfo.accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ token: sessionInfo.headlessSessionToken })
-    }).catch(() => {});
+// 3. Token Login (Required for broadcasting live RPC without official Discord app whitelisting)
+app.post('/connect-token', async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: 'Token is required.' });
+
+  if (activeClient) {
+    try { activeClient.destroy(); } catch (e) {}
+    activeClient = null;
   }
 
+  const client = new Client({ checkUpdate: false });
+  let replied = false;
+
+  client.once('ready', () => {
+    if (replied) return;
+    replied = true;
+    activeClient = client;
+    sessionInfo = {
+      connected: true,
+      mode: 'token',
+      user: client.user.tag,
+      avatar: client.user.displayAvatarURL({ format: 'png', size: 128 }),
+      activeGame: null
+    };
+    res.json({ success: true, session: sessionInfo });
+  });
+
+  try {
+    await client.login(token.trim());
+  } catch (err) {
+    if (!replied) {
+      replied = true;
+      res.status(401).json({ error: 'Invalid Discord token or login failed.' });
+    }
+  }
+});
+
+// 4. Logout / Disconnect
+app.post('/disconnect', (req, res) => {
+  if (activeClient) {
+    try { activeClient.destroy(); } catch (e) {}
+    activeClient = null;
+  }
   sessionInfo = {
     connected: false,
+    mode: null,
     user: null,
     avatar: null,
-    accessToken: null,
-    refreshToken: null,
-    activeGame: null,
-    headlessSessionToken: null
+    activeGame: null
   };
   res.json({ success: true });
 });
 
-// 4. Set Rich Presence via Official OAuth2 Bearer Token
-app.post('/set-game', async (req, res) => {
-  if (!sessionInfo.connected || !sessionInfo.accessToken) {
-    return res.status(401).json({ error: 'Please login with Discord first.' });
+// 5. Set Rich Presence Game
+app.post('/set-game', (req, res) => {
+  if (!sessionInfo.connected) {
+    return res.status(401).json({ error: 'Please connect an account first.' });
   }
 
   const { appId, gameName, details, state, largeImage, buttonLabel, buttonUrl } = req.body;
@@ -166,100 +189,47 @@ app.post('/set-game', async (req, res) => {
     return res.status(400).json({ error: 'Select a valid game.' });
   }
 
+  if (sessionInfo.mode === 'oauth' || !activeClient) {
+    return res.status(403).json({
+      error: 'OAuth2 login only displays your profile. To broadcast Rich Presence to Discord without a Discord-whitelisted app, please connect via the Token tab.'
+    });
+  }
+
   try {
-    // Delete previous active headless session if one exists
-    if (sessionInfo.headlessSessionToken) {
-      await fetch('https://discord.com', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${sessionInfo.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ token: sessionInfo.headlessSessionToken })
-      }).catch(() => {});
-    }
+    const rpc = new RichPresence(activeClient)
+      .setApplicationId(appId && appId.trim() ? appId.trim() : '112233445566778899')
+      .setType('PLAYING')
+      .setName(gameName.trim())
+      .setStartTimestamp(Date.now());
 
-    const activity = {
-      name: gameName.trim(),
-      type: 0, // 0 = Playing
-      application_id: appId && appId.trim() ? appId.trim() : CLIENT_ID,
-      timestamps: { start: Date.now() }
-    };
-
-    if (details && details.trim()) activity.details = details.trim();
-    if (state && state.trim()) activity.state = state.trim();
+    if (details && details.trim()) rpc.setDetails(details.trim());
+    if (state && state.trim()) rpc.setState(state.trim());
     if (largeImage && largeImage.trim()) {
-      activity.assets = {
-        large_image: largeImage.trim(),
-        large_text: gameName.trim()
-      };
+      rpc.setAssetsLargeImage(largeImage.trim());
+      rpc.setAssetsLargeText(gameName.trim());
     }
     if (buttonLabel && buttonLabel.trim() && buttonUrl && buttonUrl.trim()) {
-      activity.buttons = [{ label: buttonLabel.trim(), url: buttonUrl.trim() }];
+      rpc.addButton(buttonLabel.trim(), buttonUrl.trim());
     }
 
-    const rpcRes = await fetch('https://discord.com', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${sessionInfo.accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ activities: [activity] })
-    });
-
-    const rpcData = await rpcRes.json();
-    if (!rpcRes.ok) {
-      console.error('Discord RPC API Error:', rpcData);
-      return res.status(rpcRes.status).json({
-        error: rpcData.message || 'Discord rejected the RPC request. Check OAuth2 scopes.'
-      });
-    }
-
+    activeClient.user.setPresence({ activities: [rpc] });
     sessionInfo.activeGame = gameName.trim();
-    sessionInfo.headlessSessionToken = rpcData.token || null;
 
-    res.json({
-      success: true,
-      session: {
-        connected: sessionInfo.connected,
-        user: sessionInfo.user,
-        avatar: sessionInfo.avatar,
-        activeGame: sessionInfo.activeGame
-      }
-    });
+    res.json({ success: true, session: sessionInfo });
   } catch (err) {
-    console.error('Set Game Error:', err);
+    console.error(err);
     res.status(500).json({ error: 'Failed to broadcast status.' });
   }
 });
 
-// 5. Clear Active Rich Presence
-app.post('/clear-game', async (req, res) => {
-  if (sessionInfo.connected && sessionInfo.accessToken && sessionInfo.headlessSessionToken) {
-    await fetch('https://discord.com', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${sessionInfo.accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ token: sessionInfo.headlessSessionToken })
-    }).catch(() => {});
+// 6. Clear Active Rich Presence
+app.post('/clear-game', (req, res) => {
+  if (activeClient && activeClient.user) {
+    activeClient.user.setPresence({ activities: [] });
   }
-
   sessionInfo.activeGame = null;
-  sessionInfo.headlessSessionToken = null;
-
-  res.json({
-    success: true,
-    session: {
-      connected: sessionInfo.connected,
-      user: sessionInfo.user,
-      avatar: sessionInfo.avatar,
-      activeGame: null
-    }
-  });
+  res.json({ success: true, session: sessionInfo });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Nexus RPC server running on port ${PORT}`));
-      
