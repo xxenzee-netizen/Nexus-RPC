@@ -5,9 +5,6 @@ const { Client, RichPresence } = require('discord.js-selfbot-v13');
 const app = express();
 app.use(express.json());
 
-const CLIENT_ID = process.env.CLIENT_ID || 'YOUR_DISCORD_CLIENT_ID';
-const CLIENT_SECRET = process.env.CLIENT_SECRET || 'YOUR_DISCORD_CLIENT_SECRET';
-
 let activeClient = null;
 let sessionInfo = {
   connected: false,
@@ -64,55 +61,7 @@ app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// Force HTTPS OAuth2 Redirect
-app.get('/auth/discord', (req, res) => {
-  const host = req.get('host');
-  const redirectUri = `https://${host}/auth/callback`;
-  const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify`;
-  res.redirect(discordAuthUrl);
-});
-
-// OAuth2 Callback Endpoint
-app.get('/auth/callback', async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.redirect('/?error=no_code');
-
-  try {
-    const host = req.get('host');
-    const redirectUri = `https://${host}/auth/callback`;
-    const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code: code,
-        redirect_uri: redirectUri
-      })
-    });
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.redirect('/?error=oauth_failed');
-
-    const userRes = await fetch('https://discord.com/api/users/@me', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` }
-    });
-    const userData = await userRes.json();
-
-    sessionInfo = {
-      connected: true,
-      user: `${userData.username}#${userData.discriminator || '0'}`,
-      avatar: userData.avatar ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png` : 'https://cdn.discordapp.com/embed/avatars/0.png',
-      activeGame: null
-    };
-
-    res.redirect('/');
-  } catch (err) {
-    res.redirect('/?error=server_error');
-  }
-});
-
-// Gateway selfbot connection endpoint
+// Gateway selfbot token connection endpoint
 app.post('/connect-token', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
