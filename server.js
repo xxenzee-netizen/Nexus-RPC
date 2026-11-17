@@ -5,13 +5,10 @@ const { Client, RichPresence } = require('discord.js-selfbot-v13');
 const app = express();
 app.use(express.json());
 
-const CLIENT_ID = process.env.CLIENT_ID || '';
-const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
-
+// Active headless gateway session container
 let activeClient = null;
 let sessionInfo = {
   connected: false,
-  mode: null,
   user: null,
   avatar: null,
   activeGame: null
@@ -57,111 +54,64 @@ app.get('/status', (req, res) => {
   res.json(sessionInfo);
 });
 
-// Discord OAuth2 Login Endpoint
-app.get('/auth/discord', (req, res) => {
-  if (!CLIENT_ID) return res.redirect('/?error=missing_client_id');
-  const host = req.get('host');
-  const protocol = req.headers['x-forwarded-proto'] || 'https';
-  const redirectUri = `${protocol}://${host}/auth/callback`;
-  
-  const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify`;
-  res.redirect(discordAuthUrl);
-});
-
-// OAuth2 Callback Handler
-app.get('/auth/callback', async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.redirect('/?error=oauth_denied');
-
-  try {
-    const host = req.get('host');
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
-    const redirectUri = `${protocol}://${host}/auth/callback`;
-
-    const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code: code,
-        redirect_uri: redirectUri
-      })
-    });
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.redirect('/?error=oauth_failed');
-
-    const userRes = await fetch('https://discord.com/api/users/@me', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` }
-    });
-    const userData = await userRes.json();
-
-    sessionInfo = {
-      connected: true,
-      mode: 'oauth',
-      user: userData.discriminator && userData.discriminator !== '0'
-        ? `${userData.username}#${userData.discriminator}`
-        : userData.username,
-      avatar: userData.avatar
-        ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png`
-        : 'https://cdn.discordapp.com/embed/avatars/0.png',
-      activeGame: null
-    };
-
-    res.redirect('/');
-  } catch (err) {
-    res.redirect('/?error=server_error');
-  }
-});
-
-// Gateway Token Connection
-app.post('/connect-token', async (req, res) => {
+// Headless Gateway WebSocket Connection Endpoint
+app.post('/gateway-login', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
-    return res.status(400).json({ error: 'Token is required.' });
+    return res.status(400).json({ error: 'Token is required for headless gateway.' });
   }
 
   try {
+    // Terminate any existing headless client instance
     if (activeClient) {
-      activeClient.destroy();
+      try { activeClient.destroy(); } catch (e) {}
       activeClient = null;
     }
 
-    const client = new Client({ checkUpdate: false });
+    const client = new Client({ 
+      checkUpdate: false,
+      intents: ['GUILDS', 'GUILD_MESSAGES'] 
+    });
 
     client.once('ready', () => {
       activeClient = client;
       sessionInfo = {
         connected: true,
-        mode: 'token',
         user: client.user.tag,
         avatar: client.user.displayAvatarURL({ format: 'png', size: 128 }),
         activeGame: null
       };
-      res.json({ success: true, session: sessionInfo });
+      if (!res.headersSent) {
+        res.json({ success: true, session: sessionInfo });
+      }
+    });
+
+    client.on('error', (err) => {
+      console.error('Gateway socket error:', err);
     });
 
     await client.login(token.trim());
   } catch (err) {
-    sessionInfo = { connected: false, mode: null, user: null, avatar: null, activeGame: null };
-    res.status(401).json({ error: 'Invalid Discord token provided.' });
+    sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
+    if (!res.headersSent) {
+      res.status(401).json({ error: 'Failed to establish headless gateway connection. Check your token.' });
+    }
   }
 });
 
 app.post('/disconnect', (req, res) => {
   if (activeClient) {
-    activeClient.destroy();
+    try { activeClient.destroy(); } catch (e) {}
     activeClient = null;
   }
-  sessionInfo = { connected: false, mode: null, user: null, avatar: null, activeGame: null };
+  sessionInfo = { connected: false, user: null, avatar: null, activeGame: null };
   res.json({ success: true });
 });
 
-// Set Game Activity Status
+// Broadcast Real-time Rich Presence via Headless Gateway
 app.post('/set-game', async (req, res) => {
-  if (!sessionInfo.connected) {
-    return res.status(400).json({ error: 'Please log in first.' });
+  if (!sessionInfo.connected || !activeClient) {
+    return res.status(400).json({ error: 'Headless gateway client is not active.' });
   }
 
   const { appId, gameName, details, state, statusType, largeImage, buttonLabel, buttonUrl } = req.body;
@@ -169,47 +119,39 @@ app.post('/set-game', async (req, res) => {
     return res.status(400).json({ error: 'Select a game first.' });
   }
 
-  // If connected via Gateway Token, broadcast directly
-  if (sessionInfo.mode === 'token' && activeClient) {
-    try {
-      activeClient.user.setStatus(statusType || 'online');
+  try {
+    activeClient.user.setStatus(statusType || 'online');
 
-      const rpc = new RichPresence(activeClient)
-        .setApplicationId(appId.trim())
-        .setType('PLAYING')
-        .setName(gameName.trim())
-        .setStartTimestamp(Date.now());
+    const rpc = new RichPresence(activeClient)
+      .setApplicationId(appId.trim())
+      .setType('PLAYING')
+      .setName(gameName.trim())
+      .setStartTimestamp(Date.now());
 
-      if (details && details.trim()) rpc.setDetails(details.trim());
-      if (state && state.trim()) rpc.setState(state.trim());
-      if (largeImage && largeImage.trim()) rpc.setAssetsLargeImage(largeImage.trim());
-      rpc.setAssetsLargeText(gameName.trim());
+    if (details && details.trim()) rpc.setDetails(details.trim());
+    if (state && state.trim()) rpc.setState(state.trim());
+    if (largeImage && largeImage.trim()) rpc.setAssetsLargeImage(largeImage.trim());
+    rpc.setAssetsLargeText(gameName.trim());
 
-      if (buttonLabel && buttonLabel.trim() && buttonUrl && buttonUrl.trim()) {
-        rpc.addButton(buttonLabel.trim(), buttonUrl.trim());
-      }
-
-      activeClient.user.setActivity(rpc);
-      sessionInfo.activeGame = gameName.trim();
-      return res.json({ success: true, session: sessionInfo });
-    } catch (err) {
-      return res.status(500).json({ error: 'Failed to update gateway status.' });
+    if (buttonLabel && buttonLabel.trim() && buttonUrl && buttonUrl.trim()) {
+      rpc.addButton(buttonLabel.trim(), buttonUrl.trim());
     }
-  }
 
-  // If logged in via standard OAuth profile, prompt user to use gateway token mode for full RPC broadcasting
-  return res.status(400).json({ 
-    error: 'OAuth login verifies your profile. For live RPC status broadcasting, please use the Token login tab.' 
-  });
+    activeClient.user.setActivity(rpc);
+    sessionInfo.activeGame = gameName.trim();
+    return res.json({ success: true, session: sessionInfo });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to dispatch RichPresence packet to gateway.' });
+  }
 });
 
 app.post('/clear-game', async (req, res) => {
-  if (activeClient) {
-    activeClient.user.setActivity(null);
+  if (activeClient && activeClient.user) {
+    try { activeClient.user.setActivity(null); } catch (e) {}
   }
   sessionInfo.activeGame = null;
   res.json({ success: true, session: sessionInfo });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Nexus RPC running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Nexus Headless Gateway running on port ${PORT}`));
