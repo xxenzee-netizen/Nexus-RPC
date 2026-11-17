@@ -1,12 +1,13 @@
 {
-  "name": "my-rpc-panel",
+  "name": "nexus-rpc",
   "version": "1.0.0",
+  "description": "Discord Rich Presence Cloud & Manual Gateway",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "discord.js-selfbot-v13": "^3.7.1",
+    "discord.js-selfbot-v13": "^13.14.2",
     "express": "^4.19.2"
   }
 }
