@@ -9,7 +9,6 @@ const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
 
 let activeClient = null;
-let oauthSession = null;
 let sessionInfo = {
   connected: false,
   mode: null,
@@ -60,26 +59,19 @@ app.get('/status', (req, res) => {
 
 // Discord OAuth2 Login Endpoint
 app.get('/auth/discord', (req, res) => {
-  if (!CLIENT_ID) {
-    return res.redirect('/?error=missing_client_id');
-  }
+  if (!CLIENT_ID) return res.redirect('/?error=missing_client_id');
   const host = req.get('host');
   const protocol = req.headers['x-forwarded-proto'] || 'https';
   const redirectUri = `${protocol}://${host}/auth/callback`;
   
-  const scopes = 'identify';
-  const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}`;
+  const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify`;
   res.redirect(discordAuthUrl);
 });
 
 // OAuth2 Callback Handler
 app.get('/auth/callback', async (req, res) => {
   const code = req.query.code;
-  const error = req.query.error;
-  
-  if (error || !code) {
-    return res.redirect(`/?error=${error || 'oauth_denied'}`);
-  }
+  if (!code) return res.redirect('/?error=oauth_denied');
 
   try {
     const host = req.get('host');
@@ -98,19 +90,12 @@ app.get('/auth/callback', async (req, res) => {
       })
     });
     const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.redirect('/?error=token_exchange_failed');
+    if (!tokenData.access_token) return res.redirect('/?error=oauth_failed');
 
     const userRes = await fetch('https://discord.com/api/users/@me', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` }
     });
     const userData = await userRes.json();
-
-    if (activeClient) {
-      activeClient.destroy();
-      activeClient = null;
-    }
-
-    oauthSession = { accessToken: tokenData.access_token };
 
     sessionInfo = {
       connected: true,
@@ -130,7 +115,7 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// Direct Token Gateway Login
+// Gateway Token Connection
 app.post('/connect-token', async (req, res) => {
   const { token } = req.body;
   if (!token || !token.trim()) {
@@ -142,7 +127,6 @@ app.post('/connect-token', async (req, res) => {
       activeClient.destroy();
       activeClient = null;
     }
-    oauthSession = null;
 
     const client = new Client({ checkUpdate: false });
 
@@ -170,12 +154,11 @@ app.post('/disconnect', (req, res) => {
     activeClient.destroy();
     activeClient = null;
   }
-  oauthSession = null;
   sessionInfo = { connected: false, mode: null, user: null, avatar: null, activeGame: null };
   res.json({ success: true });
 });
 
-// Set Game Status
+// Set Game Activity Status
 app.post('/set-game', async (req, res) => {
   if (!sessionInfo.connected) {
     return res.status(400).json({ error: 'Please log in first.' });
@@ -186,6 +169,7 @@ app.post('/set-game', async (req, res) => {
     return res.status(400).json({ error: 'Select a game first.' });
   }
 
+  // If connected via Gateway Token, broadcast directly
   if (sessionInfo.mode === 'token' && activeClient) {
     try {
       activeClient.user.setStatus(statusType || 'online');
@@ -213,9 +197,10 @@ app.post('/set-game', async (req, res) => {
     }
   }
 
-  // OAuth mode simulation/fallback response
-  sessionInfo.activeGame = gameName.trim();
-  return res.json({ success: true, session: sessionInfo });
+  // If logged in via standard OAuth profile, prompt user to use gateway token mode for full RPC broadcasting
+  return res.status(400).json({ 
+    error: 'OAuth login verifies your profile. For live RPC status broadcasting, please use the Token login tab.' 
+  });
 });
 
 app.post('/clear-game', async (req, res) => {
