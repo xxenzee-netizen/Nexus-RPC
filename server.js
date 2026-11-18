@@ -9,22 +9,18 @@ app.use(express.json());
 const STATE_FILE = path.join(__dirname, 'nexus_state.json');
 
 let activeClient = null;
-let currentDevice = 'desktop';
 let cachedGames = [];
 
 let savedState = {
   token: null,
   activeRPC: null,
   customDraft: {
-    appId: '',
     activityType: 'PLAYING',
     statusType: 'online',
     device: 'desktop',
     name: '',
     details: '',
     state: '',
-    partySize: '',
-    partyMax: '',
     timestampMode: 'none',
     customStartMins: '',
     customEndMins: '',
@@ -54,61 +50,25 @@ function loadStateFromDisk() {
       const parsed = JSON.parse(raw);
       savedState = { ...savedState, ...parsed };
     }
-  } catch (err) {
-    console.error('Failed to read saved state:', err.message);
-  }
+  } catch (err) {}
 }
 
 function saveStateToDisk() {
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(savedState, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Failed to persist state:', err.message);
-  }
-}
-
-function getDeviceProperties(device) {
-  switch ((device || 'desktop').toLowerCase()) {
-    case 'xbox':
-      return { os: 'Xbox', browser: 'Discord Embedded', device: 'Xbox' };
-    case 'android':
-      return { os: 'Android', browser: 'Discord Android', device: 'Android' };
-    case 'ios':
-      return { os: 'iOS', browser: 'Discord iOS', device: 'iPhone' };
-    case 'browser':
-    case 'web':
-      return { os: 'Windows', browser: 'Discord Web', device: '' };
-    case 'desktop':
-    default:
-      return { os: 'Windows', browser: 'Discord Client', device: '' };
-  }
+  } catch (err) {}
 }
 
 function buildRichPresence(client, payload) {
-  const cleanAppId = payload.appId && String(payload.appId).trim();
-  const resolvedAppId = cleanAppId || '1189283746519283746';
+  const resolvedAppId = payload.appId || '1189283746519283746';
 
   const rpc = new RichPresence(client)
     .setApplicationId(resolvedAppId)
     .setType(payload.activityType || 'PLAYING')
     .setName(payload.name.trim());
 
-  if (payload.device && payload.device.toLowerCase() === 'xbox') {
-    rpc.setPlatform('xbox');
-  }
-
   if (payload.details && payload.details.trim()) rpc.setDetails(payload.details.trim());
   if (payload.state && payload.state.trim()) rpc.setState(payload.state.trim());
-
-  const pSize = parseInt(payload.partySize, 10);
-  const pMax = parseInt(payload.partyMax, 10);
-  if (!isNaN(pSize) && !isNaN(pMax) && pSize > 0 && pMax >= pSize) {
-    rpc.setParty({
-      id: 'nexus_party_' + resolvedAppId,
-      current: pSize,
-      max: pMax
-    });
-  }
 
   const now = Date.now();
   if (payload.timestampMode === 'now') {
@@ -117,12 +77,10 @@ function buildRichPresence(client, payload) {
     rpc.setStartTimestamp(now - 3600000);
   } else if (payload.timestampMode === 'custom') {
     if (payload.customStartMins !== '' && !isNaN(payload.customStartMins)) {
-      const startMs = now - (parseFloat(payload.customStartMins) * 60 * 1000);
-      rpc.setStartTimestamp(startMs);
+      rpc.setStartTimestamp(now - (parseFloat(payload.customStartMins) * 60 * 1000));
     }
     if (payload.customEndMins !== '' && !isNaN(payload.customEndMins)) {
-      const endMs = now + (parseFloat(payload.customEndMins) * 60 * 1000);
-      rpc.setEndTimestamp(endMs);
+      rpc.setEndTimestamp(now + (parseFloat(payload.customEndMins) * 60 * 1000));
     }
   }
 
@@ -155,23 +113,7 @@ function buildRichPresence(client, payload) {
   return rpc;
 }
 
-function applyPresenceToClient(client, payload) {
-  const status = payload.statusType || 'online';
-  client.user.setStatus(status);
-  const rpc = buildRichPresence(client, payload);
-  if (typeof client.user.setPresence === 'function') {
-    client.user.setPresence({
-      status,
-      activities: [rpc]
-    });
-  } else {
-    client.user.setActivity(rpc);
-  }
-}
-
-async function loginWithToken(token, deviceOverride = null) {
-  const targetDevice = (deviceOverride || (savedState.activeRPC && savedState.activeRPC.device) || 'desktop').toLowerCase();
-
+async function loginWithToken(token) {
   if (activeClient) {
     try { activeClient.destroy(); } catch (e) {}
     activeClient = null;
@@ -180,22 +122,17 @@ async function loginWithToken(token, deviceOverride = null) {
   return new Promise((resolve, reject) => {
     const client = new Client({
       checkUpdate: false,
-      intents: ['GUILDS'],
-      ws: {
-        properties: getDeviceProperties(targetDevice)
-      }
+      intents: ['GUILDS']
     });
 
     const timeout = setTimeout(() => {
       try { client.destroy(); } catch (e) {}
-      reject(new Error('Gateway connection timeout. Token may be invalid or ratelimited.'));
-    }, 15000);
+      reject(new Error('Gateway connection timeout.'));
+    }, 10000);
 
     client.once('ready', () => {
       clearTimeout(timeout);
       activeClient = client;
-      currentDevice = targetDevice;
-
       sessionInfo = {
         connected: true,
         user: client.user.tag,
@@ -206,12 +143,15 @@ async function loginWithToken(token, deviceOverride = null) {
 
       if (savedState.activeRPC && savedState.activeRPC.name) {
         try {
-          applyPresenceToClient(client, savedState.activeRPC);
+          client.user.setStatus(savedState.activeRPC.statusType || 'online');
+          if (typeof client.user.setSettings === 'function') {
+            client.user.setSettings({ ff: false, status: savedState.activeRPC.statusType || 'online', device: savedState.activeRPC.device || 'desktop' });
+          }
+          const rpc = buildRichPresence(client, savedState.activeRPC);
+          client.user.setActivity(rpc);
           sessionInfo.activeGame = savedState.activeRPC.name.trim();
           sessionInfo.activeDetails = savedState.activeRPC.details || null;
-        } catch (err) {
-          console.error('Error restoring saved RPC:', err.message);
-        }
+        } catch (err) {}
       }
 
       resolve(sessionInfo);
@@ -224,13 +164,12 @@ async function loginWithToken(token, deviceOverride = null) {
   });
 }
 
-// Auto-restore on boot
 loadStateFromDisk();
+// Background login so startup is instant and doesn't block /status or page load
 if (savedState.token) {
   loginWithToken(savedState.token)
     .then(() => console.log(`Auto-restored session for ${sessionInfo.user}`))
     .catch(() => {
-      console.log('Saved token failed to connect. Clearing.');
       savedState.token = null;
       savedState.activeRPC = null;
       saveStateToDisk();
@@ -333,23 +272,33 @@ app.post('/save-draft', (req, res) => {
 });
 
 app.post('/set-rpc', async (req, res) => {
+  if (!sessionInfo.connected || !activeClient) {
+    if (savedState.token) {
+      try {
+        await loginWithToken(savedState.token);
+      } catch (e) {
+        return res.status(400).json({ error: 'Session expired. Please reconnect your token.' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Not connected to Discord gateway.' });
+    }
+  }
+
   const payload = req.body;
   if (!payload.name || !payload.name.trim()) {
     return res.status(400).json({ error: 'Activity name is required.' });
   }
 
-  const requestedDevice = (payload.device || 'desktop').toLowerCase();
-
   try {
-    if (!sessionInfo.connected || !activeClient || currentDevice !== requestedDevice) {
-      if (!savedState.token) {
-        return res.status(400).json({ error: 'Not connected to Discord gateway.' });
-      }
-      savedState.activeRPC = payload;
-      await loginWithToken(savedState.token, requestedDevice);
-    } else {
-      applyPresenceToClient(activeClient, payload);
+    activeClient.user.setStatus(payload.statusType || 'online');
+    if (typeof activeClient.user.setSettings === 'function') {
+      try {
+        activeClient.user.setSettings({ ff: false, status: payload.statusType || 'online', device: payload.device || 'desktop' });
+      } catch (e) {}
     }
+
+    const rpc = buildRichPresence(activeClient, payload);
+    activeClient.user.setActivity(rpc);
 
     sessionInfo.activeGame = payload.name.trim();
     sessionInfo.activeDetails = payload.details ? payload.details.trim() : null;
@@ -360,7 +309,7 @@ app.post('/set-rpc', async (req, res) => {
     return res.json({ success: true, session: sessionInfo, activeRPC: savedState.activeRPC });
   } catch (err) {
     console.error('RPC Broadcast Error:', err);
-    return res.status(500).json({ error: 'Failed to update presence. Try again.' });
+    return res.status(500).json({ error: err.message || 'Failed to update presence. Try again.' });
   }
 });
 
@@ -380,4 +329,3 @@ app.post('/clear-rpc', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Nexus RPC running on port ${PORT}`));
-  
