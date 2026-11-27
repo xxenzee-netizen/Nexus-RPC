@@ -1,0 +1,19 @@
+{
+  "name": "nexus-rpc",
+  "version": "3.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "discord.js-selfbot-v13": "^3.7.1",
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.34.0"
+  }
+}
